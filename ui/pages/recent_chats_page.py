@@ -11,9 +11,7 @@ RECENT_CHATS_HTML_PATH = os.path.join(os.path.dirname(__file__), "recent_chats.h
 
 def _escape_json_for_script(payload: str) -> str:
     return (
-        payload.replace("<", "\\u003c")
-        .replace(">", "\\u003e")
-        .replace("&", "\\u0026")
+        payload.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
     )
 
 

@@ -297,7 +297,9 @@ class HomeTab(QWidget):
                 }
             )
 
-        models.sort(key=lambda item: (item["status"] != "active", item["tabName"].lower()))
+        models.sort(
+            key=lambda item: (item["status"] != "active", item["tabName"].lower())
+        )
         return models
 
     def _build_api_models(self):
@@ -341,7 +343,9 @@ class HomeTab(QWidget):
         for browser in browser_models:
             role_name = (browser.get("roleName") or "").strip()
             if role_name:
-                role_model_map[role_name].add(browser.get("tabName") or browser.get("name"))
+                role_model_map[role_name].add(
+                    browser.get("tabName") or browser.get("name")
+                )
 
         for api in api_models:
             role_name = (api.get("roleName") or "").strip()
@@ -379,7 +383,9 @@ class HomeTab(QWidget):
 
         return roles
 
-    def _build_stats(self, total_content_size, total_chats, browser_models_count, api_count):
+    def _build_stats(
+        self, total_content_size, total_chats, browser_models_count, api_count
+    ):
         return [
             {
                 "label": "Browser Models",
