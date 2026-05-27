@@ -5,7 +5,8 @@ from datetime import datetime
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QInputDialog, QStackedWidget, QVBoxLayout, QWidget
 
-from engine.db import Database
+from engine.db import Database, SavedChat
+from engine.ollama_client import OllamaClient
 from engine.secure_store import SecureApiKeyStore
 from ui.pages.categories_page import CategoriesPage
 from ui.pages.overview_page import OverviewPage
@@ -70,6 +71,7 @@ class HomeTab(QWidget):
         super().__init__()
         self.main_window = main_window
         self.db = Database()
+        self.ollama_client = OllamaClient()
         self._last_payload_signature = None
         self.custom_categories = []
         self.custom_projects = []
@@ -111,6 +113,35 @@ class HomeTab(QWidget):
         self.refresh_timer.timeout.connect(self._poll_dashboard_updates)
         self.refresh_timer.start(2000)
 
+        self.refresh_dashboard()
+
+    def handle_extracted_chat(self, payload: dict):
+        content = (payload.get("content") or "").strip()
+        if not content:
+            return
+
+        model_name = (payload.get("modelName") or "LLM").strip()
+        category = "Uncategorized"
+        title = f"{model_name} Chat"
+
+        if self.ollama_client.base_url:
+            try:
+                categorized = self.ollama_client.categorize_chat("llama3", content)
+                raw_response = categorized.get("response", "") if isinstance(categorized, dict) else ""
+                parsed = json.loads(raw_response) if raw_response else {}
+                category = (parsed.get("category") or category).strip() or category
+                title = (parsed.get("title") or title).strip() or title
+            except Exception:
+                pass
+
+        self.db.save_chat(
+            SavedChat(
+                title=title,
+                category=category,
+                content=content,
+                created_at=datetime.now().isoformat(),
+            )
+        )
         self.refresh_dashboard()
 
     def _navigate(self, section: str):
