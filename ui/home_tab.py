@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import QMessageBox, QWidget, QVBoxLayout
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebChannel import QWebChannel
 
-from engine.db import Database, SavedChat
+from engine.db import Database
 from engine.ollama_client import OllamaClient
 from engine.secure_store import SecureApiKeyStore
 
@@ -22,11 +22,6 @@ class DashboardBridge(QObject):
         self.home_tab = home_tab
 
     @pyqtSlot()
-    def openNewChat(self):
-        if hasattr(self.home_tab.main_window, "prompt_new_tab"):
-            self.home_tab.main_window.prompt_new_tab()
-
-    @pyqtSlot()
     def openAddBrowserModel(self):
         if hasattr(self.home_tab.main_window, "prompt_new_browser_model"):
             self.home_tab.main_window.prompt_new_browser_model()
@@ -35,10 +30,6 @@ class DashboardBridge(QObject):
     def openAddApiKey(self):
         if hasattr(self.home_tab.main_window, "prompt_new_api_key"):
             self.home_tab.main_window.prompt_new_api_key()
-
-    @pyqtSlot()
-    def exportDashboard(self):
-        self.home_tab.export_dashboard_data()
 
     @pyqtSlot()
     def openSettings(self):
@@ -106,7 +97,6 @@ class HomeTab(QWidget):
         self._last_rendered_payload = None
 
         self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(0, 0, 0, 0)
 
         self.browser = QWebEngineView()
         self.channel = QWebChannel(self.browser.page())
@@ -347,7 +337,7 @@ class HomeTab(QWidget):
         active_chat_id = ordered_chats[0].id if ordered_chats else None
 
         return {
-            "defaultTab": "overview",
+            "defaultTab": "llmmodels",
             "activeChatId": active_chat_id,
             "focusedCategory": categories[0]["slug"] if categories else "uncategorized",
             "focusedProject": projects[0]["slug"] if projects else "uncategorized",
@@ -433,32 +423,3 @@ class HomeTab(QWidget):
 
         if signature != self._last_payload_signature:
             self._push_payload_to_view(payload)
-
-    def export_dashboard_data(self):
-        payload = self._build_dashboard_payload()
-        export_dir = os.path.abspath(".llmconnect_data")
-        os.makedirs(export_dir, exist_ok=True)
-        export_path = os.path.join(export_dir, "dashboard_export.json")
-
-        with open(export_path, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2)
-
-        QMessageBox.information(
-            self,
-            "Export complete",
-            f"Dashboard data exported to {export_path}",
-        )
-
-    def process_extracted_chat(self, chat_text):
-        if not chat_text or not chat_text.strip():
-            return
-
-        result = self.ollama_client.categorize_chat("llama3", chat_text)
-
-        title = result.get("title", "Untitled Chat")
-        category = result.get("category", "Uncategorized")
-
-        chat = SavedChat(title=title, category=category, content=chat_text)
-        self.db.save_chat(chat)
-
-        self.refresh_dashboard()
