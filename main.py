@@ -15,6 +15,7 @@ QDialog {
 }
 
 QLabel {
+    background-color: transparent;
     color: #f5f5f5;
 }
 
@@ -92,6 +93,37 @@ QTextEdit, QListWidget, QComboBox, QLineEdit {
     border-radius: 12px;
     padding: 8px;
     color: #f5f5f5;
+}
+
+QComboBox {
+    padding-right: 28px;
+}
+
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 28px;
+    border-left: 1px solid #262626;
+    background-color: #1b1b1b;
+    border-top-right-radius: 12px;
+    border-bottom-right-radius: 12px;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #111111;
+    color: #f5f5f5;
+    selection-background-color: #2a2a2a;
+    selection-color: #ffffff;
+    border: 1px solid #262626;
+    outline: 0;
+}
+
+QComboBox QAbstractItemView::item {
+    padding: 8px 10px;
+}
+
+QComboBox QAbstractItemView::item:hover {
+    background-color: #1f1f1f;
 }
 
 QScrollBar:vertical {

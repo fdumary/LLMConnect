@@ -1,6 +1,3 @@
-import json
-import os
-
 from PyQt6.QtWidgets import (
     QDialog,
     QMessageBox,
@@ -11,6 +8,7 @@ from PyQt6.QtWidgets import (
 
 from engine.secure_store import SecureApiKeyStore
 from ui.browser_tab import BrowserTab, BrowserData
+from ui.components.api_dialog import ApiKeyDialog
 from ui.components.browser_dialog import BrowserModelDialog
 from ui.home_tab import HomeTab
 
@@ -62,24 +60,24 @@ class MainWindow(QMainWindow):
             self.add_browser_tab(data)
             self.home_tab.refresh_dashboard()
 
-    # def prompt_new_api_key(self):
-    #     dialog = ApiKeyDialog(self)
-    #     if dialog.exec() == QDialog.DialogCode.Accepted:
-    #         saved = self.api_key_store.save_api_key(
-    #             dialog.api_name,
-    #             dialog.api_model,
-    #             dialog.api_key,
-    #             dialog.api_url,
-    #             dialog.api_type,
-    #             dialog.api_role_name or "",
-    #             dialog.api_role_skill or "",
-    #         )
-    #         self.home_tab.refresh_dashboard()
-    #         QMessageBox.information(
-    #             self,
-    #             "API key saved",
-    #             f"Saved {saved['name']} for {saved['model']} securely on disk.",
-    #         )
+    def prompt_new_api_key(self):
+        dialog = ApiKeyDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            saved = self.api_key_store.save_api_key(
+                dialog.api_name,
+                dialog.api_model,
+                dialog.api_key,
+                dialog.api_url,
+                dialog.api_type,
+                dialog.api_role_name or "",
+                dialog.api_role_skill or "",
+            )
+            self.home_tab.refresh_dashboard()
+            QMessageBox.information(
+                self,
+                "API key saved",
+                f"Saved {saved['name']} for {saved['model']} securely on disk.",
+            )
 
     def prompt_new_tab(self):
         self.prompt_new_browser_model()

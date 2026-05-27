@@ -43,7 +43,7 @@ class ApiKeyDialog(QDialog):
         form = QFormLayout()
         self.name_input = QLineEdit()
         self.name_input.setPlaceholderText("Name")
-        self.model_options = MODEL_CATALOG["api_models"]
+        self.model_options = MODEL_CATALOG
         self.type_options = sorted(
             {entry["type"] for entry in self.model_options if entry.get("type")}
         )

@@ -15,12 +15,12 @@ from ui.browser_tab import BrowserData
 class BrowserModelDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Add Browser Model")
-        self.setFixedSize(420, 230)
+        self.setWindowTitle("Browser Model")
+        self.setFixedSize(420, 240)
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowCloseButtonHint)
 
         layout = QVBoxLayout(self)
-        label = QLabel("Create a browser tab for a model")
+        label = QLabel("Create a new model-specific browser tab")
         label.setStyleSheet("font-size: 16px; font-weight: bold; margin-bottom: 10px;")
         layout.addWidget(label)
 
