@@ -1,0 +1,51 @@
+function renderCategories() {
+            node.panel.innerHTML = `
+                <div class="card">
+                    <h2 class="card-title">Categories</h2>
+                    <div class="card-subtitle">Saved chats grouped by extracted category</div>
+                    <div class="category-grid">
+                        ${data.categories.map((category) => `
+                            <article class="category-card">
+                                <div class="category-top">
+                                    <div class="category-copy">
+                                        <p class="category-name">${escapeHtml(category.name)}</p>
+                                        <p class="category-description">${escapeHtml(category.description)}</p>
+                                    </div>
+                                    <span class="badge">${category.count} chats</span>
+                                </div>
+                                <div class="card-footer">
+                                    <span>Latest: ${escapeHtml(category.latestTitle)}</span>
+                                    <span>${escapeHtml(category.latestLabel)}</span>
+                                </div>
+                            </article>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderProjects() {
+            node.panel.innerHTML = `
+                <div class="card">
+                    <h2 class="card-title">Projects</h2>
+                    <div class="card-subtitle">Project-style collections derived from your saved chat categories</div>
+                    <div class="project-grid">
+                        ${data.projects.map((project) => `
+                            <article class="project-card">
+                                <div class="project-top">
+                                    <div class="project-copy">
+                                        <p class="project-name">${escapeHtml(project.name)}</p>
+                                        <p class="project-description">${escapeHtml(project.description)}</p>
+                                    </div>
+                                    <span class="badge">${project.totalChats} chats</span>
+                                </div>
+                                <div class="card-footer">
+                                    <span>${escapeHtml(project.latestChat)}</span>
+                                    <span>${escapeHtml(project.lastUpdated)}</span>
+                                </div>
+                            </article>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }

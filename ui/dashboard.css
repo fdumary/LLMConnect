@@ -256,7 +256,7 @@ button {
 .avatar { width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border); font-size: 18px; flex: 0 0 auto; }
 .model-copy, .role-copy, .project-copy, .category-copy { min-width: 0; flex: 1; }
 .model-name, .role-name, .project-name, .category-name { font-size: 14px; font-weight: 700; margin: 0; }
-.model-provider, .role-description, .project-description, .category-description { margin: 5px 0 0; font-size: 12px; line-height: 1.5; color: var(--muted-strong); }
+.model-provider, .model-role, .role-description, .project-description, .category-description { margin: 5px 0 0; font-size: 12px; line-height: 1.5; color: var(--muted-strong); }
 .badge, .tag { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; border-radius: 999px; border: 1px solid var(--border); background: var(--chip); color: var(--foreground); font-size: 11px; white-space: nowrap; }
 .status-dot { width: 7px; height: 7px; border-radius: 999px; background: #22c55e; }
 .status-dot.idle { background: #6b7280; }

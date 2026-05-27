@@ -1,41 +1,29 @@
 import urllib.request
 import json
+import os
+
 
 class OllamaClient:
-    def __init__(self, base_url="http://localhost:11434"):
-        self.base_url = base_url
+    def __init__(self, base_url=None):
+        self.base_url = base_url or os.getenv("OLLAMA_HOST")
 
     def categorize_chat(self, model: str, chat_text: str) -> dict:
-        prompt = f"""
-        You are an AI research assistant. Read the following chat thread and extract the following:
-        1. A concise, descriptive title (max 5 words).
-        2. A single word category for this chat (e.g., Coding, Research, Writing, General).
+        with open("skills/CATEGORIZE_OLLAMA.md", "r") as f:
+            prompt_template = f.read()
 
-        Output ONLY valid JSON in this exact format:
-        {{
-            "title": "Your Title Here",
-            "category": "Your Category Here"
-        }}
+        prompt = prompt_template.format(chat_text=chat_text)
 
-        Chat Thread:
-        {chat_text[:4000]}
-        """
-        
-        data = {
-            "model": model,
-            "prompt": prompt,
-            "stream": False,
-            "format": "json"
-        }
-        
-        req = urllib.request.Request(f"{self.base_url}/api/generate", data=json.dumps(data).encode('utf-8'))
-        req.add_header("Content-Type", "application/json")
-        
+        data = {"model": model, "prompt": prompt, "stream": False, "format": "json"}
+
         try:
+            req = urllib.request.Request(
+                f"{self.base_url}/api/generate",
+                data=json.dumps(data).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+            )
             with urllib.request.urlopen(req) as response:
-                result = json.loads(response.read().decode('utf-8'))
-                response_text = result.get("response", "{}")
-                return json.loads(response_text)
+                result = json.loads(response.read().decode("utf-8"))
+                return result
         except Exception as e:
-            print(f"Ollama error: {e}")
-            return {"title": "Untitled Chat", "category": "Uncategorized"}
+            print(f"Error categorizing chat: {e}")
+            return {"error": str(e)}

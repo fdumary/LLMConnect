@@ -12,6 +12,9 @@ class ApiKeyRecord:
     id: str
     name: str
     model: str
+    type: str
+    role: str
+    role_prompt: str
     api_key: str
     url: str
     created_at: str
@@ -78,6 +81,9 @@ class SecureApiKeyStore:
                 "id": record.get("id", ""),
                 "name": record.get("name", ""),
                 "model": record.get("model", ""),
+                "type": record.get("type", ""),
+                "role": record.get("role", ""),
+                "rolePrompt": record.get("role_prompt", ""),
                 "url": record.get("url", ""),
                 "apiKey": record.get("api_key", ""),
                 "maskedKey": self._mask_key(record.get("api_key", "")),
@@ -87,7 +93,16 @@ class SecureApiKeyStore:
             for record in records
         ]
 
-    def save_api_key(self, name: str, model: str, api_key: str, url: str = "") -> dict:
+    def save_api_key(
+        self,
+        name: str,
+        model: str,
+        api_key: str,
+        url: str = "",
+        type: str = "",
+        role: str = "",
+        role_prompt: str = "",
+    ) -> dict:
         records = self._read_records()
         now = datetime.now().isoformat()
         normalized_name = name.strip().lower()
@@ -115,6 +130,9 @@ class SecureApiKeyStore:
             "id": record_id,
             "name": name.strip(),
             "model": model.strip(),
+            "type": type.strip(),
+            "role": role.strip(),
+            "role_prompt": role_prompt.strip(),
             "api_key": api_key.strip(),
             "url": url.strip(),
             "created_at": created_at,
@@ -131,6 +149,9 @@ class SecureApiKeyStore:
             "id": record["id"],
             "name": record["name"],
             "model": record["model"],
+            "type": record["type"],
+            "role": record["role"],
+            "rolePrompt": record["role_prompt"],
             "url": record["url"],
             "maskedKey": self._mask_key(record["api_key"]),
             "createdAt": record["created_at"],

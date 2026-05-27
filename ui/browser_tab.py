@@ -2,174 +2,40 @@ import os
 from PyQt6.QtWidgets import QWidget, QVBoxLayout
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineProfile
-from PyQt6.QtCore import QUrl, QTimer
+from PyQt6.QtCore import QUrl
+
 
 class BrowserTab(QWidget):
-    def __init__(self, tab_id: str, default_url: str = "https://chatgpt.com"):
+    def __init__(
+        self,
+        tab_id: str,
+        default_url: str = "https://chatgpt.com",
+        role_name: str = "",
+        role_skill: str = "",
+    ):
         super().__init__()
         self.tab_id = tab_id
-        
+        self.role_name = role_name.strip()
+        self.role_skill = role_skill.strip()
+
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
-        
+
         storage_path = os.path.abspath(os.path.join(".llmconnect_data", tab_id))
         self.profile = QWebEngineProfile(tab_id, self)
         self.profile.setPersistentStoragePath(storage_path)
-        
+
         self.browser = QWebEngineView(self)
         self.browser.setPage(self.browser.page().__class__(self.profile, self.browser))
-        
+
         self.layout.addWidget(self.browser)
         self.browser.setUrl(QUrl(default_url))
-        
-        # Inject extension on load finished
-        self.browser.loadFinished.connect(self.inject_extension_widget)
-        
-        # Polling timer to catch extracted chats
-        self.poll_timer = QTimer(self)
-        self.poll_timer.timeout.connect(self.poll_extracted_data)
-        self.poll_timer.start(1000)
-        
+
         self.on_chat_extracted_callback = None
 
-    def inject_extension_widget(self, ok):
-        if not ok: return
-        js = """
-        (function() {
-            if (document.getElementById('llmconnect-widget')) return;
 
-            // Initialize global variable for Python to poll
-            window._llmExtractedChat = null;
-
-            const style = document.createElement('style');
-            style.innerHTML = `
-                #llmconnect-widget {
-                    position: fixed;
-                    bottom: 20px;
-                    left: 20px;
-                    width: 286px;
-                    padding: 16px;
-                    border-radius: 18px;
-                    border: 1px solid #262626;
-                    background: rgba(17, 17, 17, 0.94);
-                    color: #f5f5f5;
-                    z-index: 999999;
-                    font-family: 'Inter', 'Segoe UI', sans-serif;
-                    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
-                    backdrop-filter: blur(14px);
-                }
-                #llmconnect-widget h4 { margin: 0 0 4px 0; color: #f5f5f5; font-size: 14px; letter-spacing: -0.01em; }
-                #llmconnect-widget p { margin: 0 0 12px 0; color: #a3a3a3; font-size: 12px; line-height: 1.5; }
-                #llmconnect-widget select {
-                    width: 100%;
-                    padding: 10px 12px;
-                    margin-bottom: 12px;
-                    background: #141414;
-                    color: #f5f5f5;
-                    border: 1px solid #262626;
-                    border-radius: 12px;
-                    outline: none;
-                }
-                #llmconnect-widget select:focus { border-color: #3a3a3a; }
-                #llmconnect-widget button {
-                    width: 100%;
-                    padding: 11px 12px;
-                    background: linear-gradient(180deg, #f5f5f5, #d9d9d9);
-                    color: #0a0a0a;
-                    border: none;
-                    font-weight: 700;
-                    border-radius: 12px;
-                    cursor: pointer;
-                    transition: transform 0.16s ease, filter 0.16s ease;
-                }
-                #llmconnect-widget button:hover { transform: translateY(-1px); filter: brightness(1.02); }
-                #llmconnect-widget button:active { transform: translateY(0); }
-                #llmconnect-widget .llmconnect-kicker { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 11px; color: #a3a3a3; letter-spacing: 0.14em; text-transform: uppercase; }
-                #llmconnect-widget .llmconnect-dot { width: 8px; height: 8px; border-radius: 999px; background: #22c55e; }
-            `;
-            document.head.appendChild(style);
-
-            const widget = document.createElement('div');
-            widget.id = 'llmconnect-widget';
-            widget.innerHTML = `
-                <div class="llmconnect-kicker"><span class="llmconnect-dot"></span>llmConnect Persona</div>
-                <h4>Inject a role prompt</h4>
-                <p>Choose a persona before extracting the current conversation.</p>
-                <select id="llm-persona">
-                    <option value="">None</option>
-                    <option value="Adopt the persona of a visionary CEO. Keep responses strategic, high-level, and focused on business value, metrics, and leadership.">CEO</option>
-                    <option value="Adopt the persona of a senior software engineer. Focus on clean code, architecture, performance, and provide detailed technical explanations.">Developer</option>
-                    <option value="Adopt the persona of an academic researcher. Be highly analytical, cite concepts, provide evidence-based arguments, and explore nuances.">Researcher</option>
-                </select>
-                <button id="llm-extract">Extract & Categorize Chat</button>
-            `;
-            document.body.appendChild(widget);
-
-            document.getElementById('llm-persona').addEventListener('change', (e) => {
-                const personaText = e.target.value;
-                const host = window.location.hostname;
-                if (!personaText) return;
-                
-                if (host.includes('chatgpt.com')) {
-                    const textarea = document.querySelector('#prompt-textarea');
-                    if (textarea) {
-                        textarea.value = `[System Prompt: ${personaText}]\\n\\n` + textarea.value;
-                        textarea.dispatchEvent(new Event('input', { bubbles: true }));
-                    }
-                } else if (host.includes('claude.ai')) {
-                    const editor = document.querySelector('.ProseMirror');
-                    if (editor) {
-                        editor.innerHTML = `<p>[System Prompt: ${personaText}]</p>` + editor.innerHTML;
-                        editor.dispatchEvent(new Event('input', { bubbles: true }));
-                    }
-                }
-            });
-
-            document.getElementById('llm-extract').addEventListener('click', () => {
-                let thread = "";
-                const host = window.location.hostname;
-                
-                if (host.includes('chatgpt.com')) {
-                    const messages = document.querySelectorAll('[data-message-author-role]');
-                    for (const msg of messages) {
-                        const role = msg.getAttribute('data-message-author-role');
-                        const text = msg.innerText.trim();
-                        if (text) thread += (role === 'user' ? '\\n\\n--- USER ---\\n' : '\\n\\n--- AI ---\\n') + text;
-                    }
-                } else if (host.includes('claude.ai')) {
-                    const messages = document.querySelectorAll('.font-user-message, .font-claude-message');
-                    for (const msg of messages) {
-                        const role = msg.classList.contains('font-user-message') ? 'user' : 'ai';
-                        const text = msg.innerText.trim();
-                        if (text) thread += (role === 'user' ? '\\n\\n--- USER ---\\n' : '\\n\\n--- AI ---\\n') + text;
-                    }
-                }
-                
-                if (thread) {
-                    window._llmExtractedChat = thread;
-                    const btn = document.getElementById('llm-extract');
-                    btn.textContent = "Extracted! Check Dashboard";
-                    btn.style.background = "#f9e2af";
-                    setTimeout(() => { btn.textContent = "Extract & Categorize Chat"; btn.style.background = "#a6e3a1"; }, 3000);
-                }
-            });
-        })();
-        """
-        self.browser.page().runJavaScript(js)
-
-    def poll_extracted_data(self):
-        js = """
-        (function() {
-            if (window._llmExtractedChat) {
-                let data = window._llmExtractedChat;
-                window._llmExtractedChat = null; 
-                return data;
-            }
-            return null;
-        })();
-        """
-        self.browser.page().runJavaScript(js, self._handle_polled_data)
-
-    def _handle_polled_data(self, data):
-        if data and self.on_chat_extracted_callback:
-            self.on_chat_extracted_callback(data)
+class AddModelTab(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.layout = QVBoxLayout(self)
+        self.layout.addWidget(QWebEngineView(self))

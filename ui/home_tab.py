@@ -12,7 +12,6 @@ from engine.db import Database, SavedChat
 from engine.ollama_client import OllamaClient
 from engine.secure_store import SecureApiKeyStore
 
-
 # Path to the external dashboard HTML used by the QWebEngine view
 DASHBOARD_HTML_PATH = os.path.join(os.path.dirname(__file__), "dashboard.html")
 
@@ -227,6 +226,10 @@ class HomeTab(QWidget):
         ]:
             is_connected = model_name.lower() in connected_tabs
             is_active = model_name.lower() == active_browser_tab_key
+            tab_name = connected_tabs.get(model_name.lower())
+            browser_tab = (
+                self.main_window.browser_tabs_map.get(tab_name) if tab_name else None
+            )
             browser_models.append(
                 {
                     "name": model_name,
@@ -246,6 +249,9 @@ class HomeTab(QWidget):
                         model_name.lower(),
                         "Browser tab" if is_connected else "No tab open",
                     ),
+                    "roleName": (
+                        getattr(browser_tab, "role_name", "") if browser_tab else ""
+                    ),
                     "lastUsed": (
                         "Focused"
                         if is_active
@@ -261,6 +267,9 @@ class HomeTab(QWidget):
                 {
                     "name": record["name"],
                     "model": record["model"],
+                    "type": record.get("type", ""),
+                    "roleName": record.get("role", ""),
+                    "rolePrompt": record.get("rolePrompt", ""),
                     "url": record.get("url", ""),
                     "avatar": "🔐",
                     "status": "available",
@@ -310,7 +319,7 @@ class HomeTab(QWidget):
 
         overview_stats = [
             {
-                "label": "Open Tabs",
+                "label": "Browser Models",
                 "value": open_tab_count,
                 "sublabel": "Browser tabs currently open",
                 "badge": "Live",
@@ -322,22 +331,10 @@ class HomeTab(QWidget):
                 "badge": "Library",
             },
             {
-                "label": "Browser Models",
-                "value": open_tab_count,
-                "sublabel": "Browser tabs currently open",
-                "badge": "Live",
-            },
-            {
                 "label": "API Keys",
                 "value": len(api_models),
                 "sublabel": "Encrypted local API profiles",
                 "badge": "Live",
-            },
-            {
-                "label": "Categories",
-                "value": len(categories),
-                "sublabel": "Derived from extracted chats",
-                "badge": "Taxonomy",
             },
             {
                 "label": "Storage",
@@ -424,7 +421,9 @@ class HomeTab(QWidget):
                 with open(DASHBOARD_HTML_PATH, "r", encoding="utf-8") as handle:
                     html_template = handle.read()
             except Exception:
-                html_template = "<html><body><pre>Unable to load dashboard.html</pre></body></html>"
+                html_template = (
+                    "<html><body><pre>Unable to load dashboard.html</pre></body></html>"
+                )
 
             html_document = html_template.replace("__APP_DATA__", json_data)
             self._last_payload_signature = signature

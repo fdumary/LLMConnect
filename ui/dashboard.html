@@ -64,13 +64,12 @@
     <script>
         let data = __APP_DATA__;
         const tabs = [
-            { id: 'overview', label: 'LLM Models' },
-            { id: 'categories', label: 'Categories' },
-            { id: 'projects', label: 'Projects' },
+            { id: 'llmmodels', label: 'LLM Models' },
+            { id: 'rolesnpersona', label: 'Roles & Personas' },
             { id: 'recent', label: 'Recent Activity' },
         ];
 
-        let activeTab = data.defaultTab || 'overview';
+        let activeTab = data.defaultTab || 'llmmodels';
         let activeChatId = data.activeChatId || (data.chats[0] && data.chats[0].id) || null;
         let llmConnectBridge = null;
 
@@ -241,8 +240,8 @@
             node.sidebar.innerHTML = `
                 <div class="section-label">Navigation</div>
                 <div class="nav-list">
-                    <button class="nav-item ${activeTab === 'overview' ? 'active' : ''}" type="button" data-tab="overview">
-                        <span class="nav-label"><span class="nav-dot blue" aria-hidden="true"></span>Overview</span>
+                    <button class="nav-item ${activeTab === 'llmmodels' ? 'active' : ''}" type="button" data-tab="llmmodels">
+                        <span class="nav-label"><span class="nav-dot blue" aria-hidden="true"></span>LLM Models</span>
                         <span class="nav-meta">${escapeHtml(String(data.overview.browserModels))} tabs</span>
                     </button>
                 </div>
@@ -312,7 +311,7 @@
             });
         }
 
-        function renderOverview(activeChat) {
+        function renderLlmModels() {
             const browserModelsHtml = data.browserModels.map((model) => `
                 <article class="model-card">
                     <div class="model-top">
@@ -322,6 +321,7 @@
                     <div class="model-copy">
                         <p class="model-name">${escapeHtml(model.name)}</p>
                         <p class="model-provider">${escapeHtml(model.provider)}</p>
+                        ${model.roleName ? `<p class="model-role">Role: ${escapeHtml(model.roleName)}</p>` : ''}
                     </div>
                     <div class="card-footer">
                         <span>${escapeHtml(model.tabName)}</span>
@@ -338,7 +338,8 @@
                     </div>
                     <div class="model-copy">
                         <p class="model-name">${escapeHtml(model.name)}</p>
-                        <p class="model-provider">${escapeHtml(model.model)}${model.url ? ` · ${escapeHtml(model.url)}` : ''}</p>
+                        <p class="model-provider">${escapeHtml(model.model)}${model.type ? ` · ${escapeHtml(model.type)}` : ''}${model.url ? ` · ${escapeHtml(model.url)}` : ''}</p>
+                        ${model.roleName ? `<p class="model-role">Role: ${escapeHtml(model.roleName)}</p>` : ''}
                     </div>
                     <div class="card-footer">
                         <span>${escapeHtml(model.maskedKey)}</span>
@@ -347,6 +348,35 @@
                 </article>
             `).join('');
 
+            node.panel.innerHTML = `
+                <div>
+                    <div style="display:flex;flex-direction:column;gap:16px;">
+                        <article class="card">
+                            <h2 class="card-title">Connected Browser Models</h2>
+                            <div class="card-subtitle">Browser tabs currently mapped to the desktop app</div>
+                            <div class="model-grid">${browserModelsHtml}</div>
+                        </article>
+
+                        <article class="card">
+                            <h2 class="card-title">API Keys</h2>
+                            <div class="card-subtitle">Encrypted local API key profiles</div>
+                            <div class="model-grid">${apiModelsHtml}</div>
+                        </article>
+
+                        <article class="card">
+                            <h2 class="card-title">Quick Actions</h2>
+                            <div class="card-subtitle">Shortcuts for adding browser models and API keys</div>
+                            <div class="quick-actions">
+                                <button class="action-btn" type="button" data-action="add-browser-model">Add Browser Model</button>
+                                <button class="action-btn" type="button" data-action="add-api-key">Add API Key</button>
+                            </div>
+                        </article>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderRolesAndPersona() {
             const rolesHtml = data.roles.map((role) => `
                 <article class="role-card">
                     <div class="role-top">
@@ -364,106 +394,49 @@
                 </article>
             `).join('');
 
-            const activeChatHtml = activeChat ? `
-                <article class="card">
-                    <h2 class="card-title">Active Chat</h2>
-                    <div class="card-subtitle">Selected from the sidebar or recent activity</div>
-                    <p class="model-name">${escapeHtml(activeChat.title)}</p>
-                    <p class="detail-meta">${escapeHtml(activeChat.category)} • ${escapeHtml(formatDateLabel(activeChat.created_at))}</p>
-                    <div class="pill-row">
-                        ${activeChat.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}
+            const apiRoleHtml = data.apiModels.map((model) => `
+                <article class="model-card">
+                    <div class="model-top">
+                        <div class="avatar">${escapeHtml(model.avatar)}</div>
+                        <span class="badge"><span class="status-dot"></span>${escapeHtml(model.statusLabel)}</span>
                     </div>
-                    <div class="detail-body" style="margin-top: 14px;">${escapeHtml(activeChat.content)}</div>
+                    <div class="model-copy">
+                        <p class="model-name">${escapeHtml(model.name)}</p>
+                        <p class="model-provider">${escapeHtml(model.model)}${model.type ? ` · ${escapeHtml(model.type)}` : ''}${model.url ? ` · ${escapeHtml(model.url)}` : ''}</p>
+                        ${model.roleName ? `<p class="model-role">Role: ${escapeHtml(model.roleName)}</p>` : ''}
+                    </div>
+                    <div class="card-footer">
+                        <span>${escapeHtml(model.maskedKey)}</span>
+                        <span>${escapeHtml(model.lastUsed)}</span>
+                    </div>
                 </article>
-            ` : `
-                <div class="empty-state">No saved chats yet. Extract a conversation from ChatGPT or Claude to populate the dashboard.</div>
-            `;
+            `).join('');
 
             node.panel.innerHTML = `
-                <div class="panel-grid">
+                <div>
                     <div style="display:flex;flex-direction:column;gap:16px;">
                         <article class="card">
-                            <h2 class="card-title">Connected Browser Models</h2>
-                            <div class="card-subtitle">Browser tabs currently mapped to the desktop app</div>
-                            <div class="model-grid">${browserModelsHtml}</div>
-                        </article>
-
-                        <article class="card">
-                            <h2 class="card-title">API Keys</h2>
-                            <div class="card-subtitle">Encrypted local API key profiles</div>
-                            <div class="model-grid">${apiModelsHtml}</div>
-                        </article>
-
-                        <article class="card">
-                            <h2 class="card-title">Roles & Personas</h2>
-                            <div class="card-subtitle">Preset prompts that match the Next.js design system</div>
+                            <h2 class="card-title">Roles Library</h2>
+                            <div class="card-subtitle">Preset prompts available when creating tabs and API profiles</div>
                             <div class="role-grid">${rolesHtml}</div>
                         </article>
 
                         <article class="card">
-                            <h2 class="card-title">Quick Actions</h2>
-                            <div class="card-subtitle">Shortcuts for the most common workflows</div>
-                            <div class="quick-actions">
-                                <button class="action-btn" type="button" data-action="add-browser-model">Add Browser Model</button>
-                                <button class="action-btn" type="button" data-action="add-api-key">Add API Key</button>
-                                <button class="action-btn" type="button" data-action="show-projects">Projects</button>
-                                <button class="action-btn" type="button" data-action="show-categories">Categories</button>
-                            </div>
+                            <h2 class="card-title">Saved API Roles</h2>
+                            <div class="card-subtitle">API profiles already tagged with a role</div>
+                            <div class="model-grid">${apiRoleHtml}</div>
                         </article>
                     </div>
 
-                    <div style="display:flex;flex-direction:column;gap:16px;">${activeChatHtml}</div>
-                </div>
-            `;
-        }
-
-        function renderCategories() {
-            node.panel.innerHTML = `
-                <div class="card">
-                    <h2 class="card-title">Categories</h2>
-                    <div class="card-subtitle">Saved chats grouped by extracted category</div>
-                    <div class="category-grid">
-                        ${data.categories.map((category) => `
-                            <article class="category-card">
-                                <div class="category-top">
-                                    <div class="category-copy">
-                                        <p class="category-name">${escapeHtml(category.name)}</p>
-                                        <p class="category-description">${escapeHtml(category.description)}</p>
-                                    </div>
-                                    <span class="badge">${category.count} chats</span>
-                                </div>
-                                <div class="card-footer">
-                                    <span>Latest: ${escapeHtml(category.latestTitle)}</span>
-                                    <span>${escapeHtml(category.latestLabel)}</span>
-                                </div>
-                            </article>
-                        `).join('')}
-                    </div>
-                </div>
-            `;
-        }
-
-        function renderProjects() {
-            node.panel.innerHTML = `
-                <div class="card">
-                    <h2 class="card-title">Projects</h2>
-                    <div class="card-subtitle">Project-style collections derived from your saved chat categories</div>
-                    <div class="project-grid">
-                        ${data.projects.map((project) => `
-                            <article class="project-card">
-                                <div class="project-top">
-                                    <div class="project-copy">
-                                        <p class="project-name">${escapeHtml(project.name)}</p>
-                                        <p class="project-description">${escapeHtml(project.description)}</p>
-                                    </div>
-                                    <span class="badge">${project.totalChats} chats</span>
-                                </div>
-                                <div class="card-footer">
-                                    <span>${escapeHtml(project.latestChat)}</span>
-                                    <span>${escapeHtml(project.lastUpdated)}</span>
-                                </div>
-                            </article>
-                        `).join('')}
+                    <div style="display:flex;flex-direction:column;gap:16px;">
+                        <article class="card">
+                            <h2 class="card-title">Quick Actions</h2>
+                            <div class="card-subtitle">Create or update browser and API roles</div>
+                            <div class="quick-actions">
+                                <button class="action-btn" type="button" data-action="add-browser-model">Add Browser Model</button>
+                                <button class="action-btn" type="button" data-action="add-api-key">Add API Key</button>
+                            </div>
+                        </article>
                     </div>
                 </div>
             `;
@@ -473,7 +446,7 @@
             const activeChat = getActiveChat();
 
             node.panel.innerHTML = `
-                <div class="detail-layout">
+                <div class="display:flex;flex-direction:column;gap:16px;">
                     <div class="list-card">
                         ${data.chats.map((chat) => `
                             <div class="chat-row ${chat.id === activeChatId ? 'active' : ''}" data-chat-row="${escapeHtml(chat.id)}">
@@ -489,21 +462,6 @@
                             </div>
                         `).join('') || '<div class="empty-state">No chats available yet.</div>'}
                     </div>
-
-                    <article class="card">
-                        <h2 class="card-title">Chat Preview</h2>
-                        <div class="card-subtitle">Focused detail for the selected thread</div>
-                        ${activeChat ? `
-                            <p class="model-name">${escapeHtml(activeChat.title)}</p>
-                            <div class="detail-meta">${escapeHtml(activeChat.category)} • ${escapeHtml(activeChat.createdLabel)}</div>
-                            <div class="pill-row">
-                                ${activeChat.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}
-                            </div>
-                            <div class="detail-body" style="margin-top: 14px;">${escapeHtml(activeChat.content)}</div>
-                        ` : `
-                            <div class="empty-state">Select a chat to preview its extracted transcript here.</div>
-                        `}
-                    </article>
                 </div>
             `;
 
@@ -514,9 +472,17 @@
 
         function updateHeader() {
             const copyByTab = {
-                overview: {
-                    title: 'Overview',
-                    description: 'Unified hub for browser tabs, encrypted API keys, and the latest extracted chats.',
+                llmmodels: {
+                    title: 'LLM Models',
+                    description: 'Unified hub for browser tabs and encrypted API keys.',
+                },
+                rolesnpersona: {
+                    title: 'Roles & Personas',
+                    description: 'Preset prompts and persona templates for tabs and API profiles.',
+                },
+                recent: {
+                    title: 'Recent Activity',
+                    description: 'Scan the newest conversations and inspect the currently selected thread.',
                 },
                 categories: {
                     title: 'Categories',
@@ -526,13 +492,9 @@
                     title: 'Projects',
                     description: 'Project-style collections derived from your saved chats and clustered by category.',
                 },
-                recent: {
-                    title: 'Recent Activity',
-                    description: 'Scan the newest conversations and inspect the currently selected thread.',
-                },
             };
 
-            const copy = copyByTab[activeTab] || copyByTab.overview;
+            const copy = copyByTab[activeTab] || copyByTab.llmmodels;
             node.headerTitle.textContent = copy.title;
             node.headerDescription.textContent = copy.description;
         }
@@ -543,12 +505,10 @@
             renderSidebar();
             renderStats();
 
-            if (activeTab === 'overview') {
-                renderOverview(getActiveChat());
-            } else if (activeTab === 'categories') {
-                renderCategories();
-            } else if (activeTab === 'projects') {
-                renderProjects();
+            if (activeTab === 'llmmodels') {
+                renderLlmModels();
+            } else if (activeTab === 'rolesnpersona') {
+                renderRolesAndPersona();
             } else {
                 renderRecent();
             }
