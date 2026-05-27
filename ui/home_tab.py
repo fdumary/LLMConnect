@@ -1,42 +1,16 @@
 import json
-import os
 from collections import defaultdict
 from datetime import datetime
 
-from PyQt6.QtCore import QObject, QTimer, pyqtSlot, QUrl
-from PyQt6.QtWidgets import QMessageBox, QWidget, QVBoxLayout
-from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtWebChannel import QWebChannel
+from PyQt6.QtCore import QTimer
+from PyQt6.QtWidgets import QInputDialog, QStackedWidget, QVBoxLayout, QWidget
 
 from engine.db import Database
 from engine.secure_store import SecureApiKeyStore
-
-# Path to the external dashboard HTML used by the QWebEngine view
-DASHBOARD_HTML_PATH = os.path.join(os.path.dirname(__file__), "dashboard.html")
-
-
-class DashboardBridge(QObject):
-    def __init__(self, home_tab: "HomeTab"):
-        super().__init__()
-        self.home_tab = home_tab
-
-    @pyqtSlot()
-    def openAddBrowserModel(self):
-        if hasattr(self.home_tab.main_window, "prompt_new_browser_model"):
-            self.home_tab.main_window.prompt_new_browser_model()
-
-    @pyqtSlot()
-    def openAddApiKey(self):
-        if hasattr(self.home_tab.main_window, "prompt_new_api_key"):
-            self.home_tab.main_window.prompt_new_api_key()
-
-    @pyqtSlot()
-    def openSettings(self):
-        QMessageBox.information(
-            self.home_tab,
-            "Settings",
-            "Settings are not configured yet in this build.",
-        )
+from ui.pages.categories_page import CategoriesPage
+from ui.pages.overview_page import OverviewPage
+from ui.pages.projects_page import ProjectsPage
+from ui.pages.recent_chats_page import RecentChatsPage
 
 
 def _parse_created_at(created_at: str) -> datetime | None:
@@ -64,7 +38,7 @@ def _snippet_from_content(content: str, limit: int = 180) -> str:
     normalized = " ".join(content.split())
     if len(normalized) <= limit:
         return normalized
-    return normalized[: limit - 1].rstrip() + "…"
+    return normalized[: limit - 1].rstrip() + "..."
 
 
 def _slugify(value: str) -> str:
@@ -78,10 +52,17 @@ def _slugify(value: str) -> str:
     return result or "uncategorized"
 
 
-def _escape_json_for_script(payload: str) -> str:
-    return (
-        payload.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
-    )
+def _model_avatar(name: str) -> str:
+    normalized = (name or "").strip().lower()
+    if "chatgpt" in normalized:
+        return "🤖"
+    if "claude" in normalized:
+        return "🧠"
+    if "gemini" in normalized:
+        return "✨"
+    if "deepseek" in normalized:
+        return "🔎"
+    return "💬"
 
 
 class HomeTab(QWidget):
@@ -89,18 +70,42 @@ class HomeTab(QWidget):
         super().__init__()
         self.main_window = main_window
         self.db = Database()
-        self.bridge = DashboardBridge(self)
-        self._dashboard_loaded = False
         self._last_payload_signature = None
-        self._last_rendered_payload = None
+        self.custom_categories = []
+        self.custom_projects = []
 
         self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
 
-        self.browser = QWebEngineView()
-        self.channel = QWebChannel(self.browser.page())
-        self.channel.registerObject("llmConnectBridge", self.bridge)
-        self.browser.page().setWebChannel(self.channel)
-        self.browser.loadFinished.connect(self._on_dashboard_load_finished)
+        self.stack = QStackedWidget(self)
+        self.layout.addWidget(self.stack)
+
+        self.overview_page = OverviewPage(
+            on_navigate=self._navigate,
+            on_add_browser_model=self._open_add_browser_model,
+            on_add_api_key=self._open_add_api_key,
+        )
+        self.categories_page = CategoriesPage(
+            on_navigate=self._navigate,
+            on_add_category=self._add_category,
+        )
+        self.projects_page = ProjectsPage(
+            on_navigate=self._navigate,
+            on_add_project=self._add_project,
+        )
+        self.recent_page = RecentChatsPage(on_navigate=self._navigate)
+
+        self.page_map = {
+            "overview": 0,
+            "categories": 1,
+            "projects": 2,
+            "recent": 3,
+        }
+
+        self.stack.addWidget(self.overview_page)
+        self.stack.addWidget(self.categories_page)
+        self.stack.addWidget(self.projects_page)
+        self.stack.addWidget(self.recent_page)
 
         self.refresh_timer = QTimer(self)
         self.refresh_timer.timeout.connect(self._poll_dashboard_updates)
@@ -108,25 +113,76 @@ class HomeTab(QWidget):
 
         self.refresh_dashboard()
 
-    def _build_dashboard_payload(self):
+    def _navigate(self, section: str):
+        index = self.page_map.get(section, 0)
+        self.stack.setCurrentIndex(index)
+        self.refresh_dashboard()
+
+    def _open_add_browser_model(self):
+        if hasattr(self.main_window, "prompt_new_browser_model"):
+            self.main_window.prompt_new_browser_model()
+
+    def _open_add_api_key(self):
+        if hasattr(self.main_window, "prompt_new_api_key"):
+            self.main_window.prompt_new_api_key()
+
+    def _add_category(self):
+        name, ok = QInputDialog.getText(self, "New Category", "Category name:")
+        if not ok or not name.strip():
+            return
+
+        description, ok = QInputDialog.getText(
+            self, "Category Description", "Description:"
+        )
+        if not ok:
+            return
+
+        item = {
+            "id": f"cat-{_slugify(name)}-{len(self.custom_categories) + 1}",
+            "name": name.strip(),
+            "description": description.strip(),
+            "count": 0,
+            "latestTitle": "-",
+            "latestLabel": "-",
+            "dot": "blue",
+        }
+        self.custom_categories.append(item)
+        self.refresh_dashboard()
+
+    def _add_project(self):
+        name, ok = QInputDialog.getText(self, "New Project", "Project name:")
+        if not ok or not name.strip():
+            return
+
+        description, ok = QInputDialog.getText(
+            self, "Project Description", "Description:"
+        )
+        if not ok:
+            return
+
+        item = {
+            "id": f"proj-{_slugify(name)}-{len(self.custom_projects) + 1}",
+            "name": name.strip(),
+            "description": description.strip(),
+            "totalChats": 0,
+            "latestChat": "-",
+            "lastUpdated": "-",
+        }
+        self.custom_projects.append(item)
+        self.refresh_dashboard()
+
+    def _build_chat_payloads(self):
         chats = self.db.get_all_chats()
-        chat_groups = defaultdict(list)
-        total_content_size = 0
-
-        for chat in chats:
-            chat_groups[chat.category].append(chat)
-            total_content_size += len(chat.content)
-
         ordered_chats = sorted(
             chats,
             key=lambda chat: _parse_created_at(chat.created_at) or datetime.min,
             reverse=True,
         )
 
-        chat_payloads = []
+        payloads = []
         for chat in ordered_chats:
             parsed_created_at = _parse_created_at(chat.created_at)
-            chat_payloads.append(
+            payloads.append(
                 {
                     "id": chat.id,
                     "title": chat.title,
@@ -140,186 +196,206 @@ class HomeTab(QWidget):
                         else ""
                     ),
                     "messageCount": max(1, len(chat.content.splitlines()) or 1),
-                    "tags": [
-                        part.strip()
-                        for part in chat.category.split(" ")
-                        if part.strip()
-                    ],
                     "snippet": _snippet_from_content(chat.content),
                 }
             )
+
+        return payloads
+
+    def _build_categories(self, chat_payloads):
+        chat_groups = defaultdict(list)
+        for chat in chat_payloads:
+            chat_groups[chat["category"]].append(chat)
 
         categories = []
         for category_name, category_chats in sorted(
             chat_groups.items(), key=lambda item: len(item[1]), reverse=True
         ):
-            latest_chat = sorted(
-                category_chats,
-                key=lambda chat: _parse_created_at(chat.created_at) or datetime.min,
-                reverse=True,
-            )[0]
+            latest_chat = category_chats[0]
             categories.append(
                 {
+                    "id": _slugify(category_name),
                     "slug": _slugify(category_name),
                     "name": category_name,
                     "description": (
                         f"{len(category_chats)} saved chats grouped under this category."
                     ),
                     "count": len(category_chats),
-                    "latestTitle": latest_chat.title,
-                    "latestLabel": _short_date_label(latest_chat.created_at),
+                    "latestTitle": latest_chat["title"],
+                    "latestLabel": _short_date_label(latest_chat["created_at"]),
                     "dot": self._category_dot(category_name),
                 }
             )
+
+        existing_ids = {item["id"] for item in categories}
+        for custom in self.custom_categories:
+            if custom["id"] not in existing_ids:
+                categories.append(custom)
+
+        return categories
+
+    def _build_projects(self, chat_payloads):
+        chat_groups = defaultdict(list)
+        for chat in chat_payloads:
+            chat_groups[chat["category"]].append(chat)
 
         projects = []
         for category_name, category_chats in sorted(
             chat_groups.items(), key=lambda item: len(item[1]), reverse=True
         ):
-            latest_chat = sorted(
-                category_chats,
-                key=lambda chat: _parse_created_at(chat.created_at) or datetime.min,
-                reverse=True,
-            )[0]
+            latest_chat = category_chats[0]
             projects.append(
                 {
+                    "id": _slugify(category_name),
                     "slug": _slugify(category_name),
                     "name": category_name,
                     "description": (
                         f"Project-style collection derived from {len(category_chats)} saved chats."
                     ),
                     "totalChats": len(category_chats),
-                    "latestChat": latest_chat.title,
-                    "lastUpdated": _short_date_label(latest_chat.created_at),
+                    "latestChat": latest_chat["title"],
+                    "lastUpdated": _short_date_label(latest_chat["created_at"]),
                 }
             )
 
-        connected_tabs = {
-            name.lower(): name for name in self.main_window.browser_tabs_map.keys()
-        }
-        open_tab_count = len(self.main_window.browser_tabs_map)
-        active_browser_tab_name = getattr(
-            self.main_window, "active_browser_tab_name", None
-        )
-        active_browser_tab_key = (
-            active_browser_tab_name.lower() if active_browser_tab_name else None
-        )
-        browser_models = []
-        for model_name, provider, avatar in [
-            ("ChatGPT", "OpenAI", "🤖"),
-            ("Claude", "Anthropic", "🧠"),
-            ("Gemini", "Google", "💎"),
-            ("DeepSeek", "DeepSeek", "🔍"),
-        ]:
-            is_connected = model_name.lower() in connected_tabs
-            is_active = model_name.lower() == active_browser_tab_key
-            tab_name = connected_tabs.get(model_name.lower())
-            browser_tab = (
-                self.main_window.browser_tabs_map.get(tab_name) if tab_name else None
-            )
-            browser_models.append(
+        existing_ids = {item["id"] for item in projects}
+        for custom in self.custom_projects:
+            if custom["id"] not in existing_ids:
+                projects.append(custom)
+
+        return projects
+
+    def _format_last_used(self, value):
+        if isinstance(value, datetime):
+            return value.strftime("%b %d, %Y %I:%M %p").lstrip("0").replace(" 0", " ")
+        if isinstance(value, str) and value.strip():
+            return value
+        return "Not used"
+
+    def _build_browser_models(self):
+        active_name = getattr(self.main_window, "active_browser_tab_name", None)
+        models = []
+
+        for tab_name, browser_tab in self.main_window.browser_tabs_map.items():
+            model_name = getattr(browser_tab, "model_name", "Unknown")
+            role_name = getattr(browser_tab, "role_name", "")
+            status = "active" if tab_name == active_name else "connected"
+            models.append(
                 {
+                    "tabName": tab_name,
                     "name": model_name,
-                    "provider": provider,
-                    "avatar": avatar,
-                    "status": (
-                        "active"
-                        if is_active
-                        else "connected" if is_connected else "idle"
+                    "modelName": model_name,
+                    "provider": "Browser Session",
+                    "avatar": _model_avatar(model_name),
+                    "roleName": role_name,
+                    "chats": int(getattr(browser_tab, "chat_count", 0) or 0),
+                    "lastUsed": self._format_last_used(
+                        getattr(browser_tab, "last_used_at", None)
                     ),
-                    "statusLabel": (
-                        "Active"
-                        if is_active
-                        else "Connected" if is_connected else "Available"
-                    ),
-                    "tabName": connected_tabs.get(
-                        model_name.lower(),
-                        "Browser tab" if is_connected else "No tab open",
-                    ),
-                    "roleName": (
-                        getattr(browser_tab, "role_name", "") if browser_tab else ""
-                    ),
-                    "lastUsed": (
-                        "Focused"
-                        if is_active
-                        else "Live now" if is_connected else "Not connected"
-                    ),
+                    "status": status,
+                    "statusLabel": "Active" if status == "active" else "Connected",
                 }
             )
 
+        models.sort(key=lambda item: (item["status"] != "active", item["tabName"].lower()))
+        return models
+
+    def _build_api_models(self):
         api_key_store = SecureApiKeyStore()
         api_models = []
+
         for record in api_key_store.list_api_keys():
+            model_name = record.get("model", "")
+            api_name = record.get("name", "")
+            model_type = record.get("type", "")
+            endpoint = record.get("url", "")
+            metadata = " · ".join(
+                item for item in [model_name, model_type, endpoint] if item
+            )
             api_models.append(
                 {
-                    "name": record["name"],
-                    "model": record["model"],
-                    "type": record.get("type", ""),
-                    "roleName": record.get("role", ""),
-                    "rolePrompt": record.get("rolePrompt", ""),
-                    "url": record.get("url", ""),
+                    "apiName": api_name,
+                    "name": api_name,
+                    "modelName": model_name,
+                    "model": model_name,
+                    "provider": metadata or "API Integration",
                     "avatar": "🔐",
-                    "status": "available",
-                    "statusLabel": "Ready",
-                    "maskedKey": record["maskedKey"],
-                    "lastUsed": "Configured securely",
+                    "status": "connected",
+                    "statusLabel": "Configured",
+                    "type": model_type,
+                    "roleName": record.get("role", ""),
+                    "tokensUsed": int(record.get("tokensUsed", 0) or 0),
+                    "lastUsed": record.get("lastUsed")
+                    or record.get("updatedAt")
+                    or record.get("createdAt")
+                    or "Not used",
+                    "maskedKey": record.get("maskedKey", ""),
                 }
             )
 
-        roles = [
-            {
-                "name": "Enterprise Architect",
-                "description": "Strategic system design and technology roadmaps",
-                "totalChats": 45,
-                "accent": "violet",
-                "shortPrompt": "System strategy",
-            },
-            {
-                "name": "Senior Developer",
-                "description": "Full-stack development and code review expert",
-                "totalChats": 87,
-                "accent": "blue",
-                "shortPrompt": "Code quality",
-            },
-            {
-                "name": "Researcher",
-                "description": "Analysis, synthesis, and evidence-based thinking",
-                "totalChats": 23,
-                "accent": "green",
-                "shortPrompt": "Insight work",
-            },
-            {
-                "name": "Technical Writer",
-                "description": "Documentation and communication expert",
-                "totalChats": 31,
-                "accent": "amber",
-                "shortPrompt": "Docs clarity",
-            },
-            {
-                "name": "Data Scientist",
-                "description": "ML, statistics, and decision support",
-                "totalChats": 55,
-                "accent": "pink",
-                "shortPrompt": "Model analysis",
-            },
-        ]
+        return api_models
 
-        overview_stats = [
+    def _build_roles(self, browser_models, api_models):
+        role_model_map = defaultdict(set)
+
+        for browser in browser_models:
+            role_name = (browser.get("roleName") or "").strip()
+            if role_name:
+                role_model_map[role_name].add(browser.get("tabName") or browser.get("name"))
+
+        for api in api_models:
+            role_name = (api.get("roleName") or "").strip()
+            if role_name:
+                role_model_map[role_name].add(api.get("apiName") or api.get("name"))
+
+        if not role_model_map:
+            return [
+                {
+                    "name": "No role assigned",
+                    "description": "Assign roles while adding browser tabs or API keys.",
+                    "modelCount": 0,
+                    "modelNames": [],
+                    "accent": "blue",
+                }
+            ]
+
+        accents = ["violet", "blue", "green", "amber", "pink", "teal"]
+        sorted_roles = sorted(
+            role_model_map.items(), key=lambda item: len(item[1]), reverse=True
+        )
+
+        roles = []
+        for index, (role_name, models) in enumerate(sorted_roles):
+            model_names = sorted(filter(None, models))
+            roles.append(
+                {
+                    "name": role_name,
+                    "description": f"Assigned to {len(model_names)} model(s)",
+                    "modelCount": len(model_names),
+                    "modelNames": model_names,
+                    "accent": accents[index % len(accents)],
+                }
+            )
+
+        return roles
+
+    def _build_stats(self, total_content_size, total_chats, browser_models_count, api_count):
+        return [
             {
                 "label": "Browser Models",
-                "value": open_tab_count,
-                "sublabel": "Browser tabs currently open",
+                "value": browser_models_count,
+                "sublabel": "Browser models currently active",
                 "badge": "Live",
             },
             {
                 "label": "Total Chats",
-                "value": len(chats),
+                "value": total_chats,
                 "sublabel": "Saved locally in SQLite",
                 "badge": "Library",
             },
             {
                 "label": "API Keys",
-                "value": len(api_models),
+                "value": api_count,
                 "sublabel": "Encrypted local API profiles",
                 "badge": "Live",
             },
@@ -331,26 +407,66 @@ class HomeTab(QWidget):
             },
         ]
 
-        active_chat_id = ordered_chats[0].id if ordered_chats else None
+    def _build_page_payloads(self):
+        chat_payloads = self._build_chat_payloads()
+        categories = self._build_categories(chat_payloads)
+        projects = self._build_projects(chat_payloads)
+        browser_models = self._build_browser_models()
+        api_models = self._build_api_models()
+        roles = self._build_roles(browser_models, api_models)
 
-        return {
-            "defaultTab": "llmmodels",
-            "activeChatId": active_chat_id,
-            "focusedCategory": categories[0]["slug"] if categories else "uncategorized",
-            "focusedProject": projects[0]["slug"] if projects else "uncategorized",
-            "overview": {
-                "openTabs": open_tab_count,
-                "browserModels": open_tab_count,
-                "apiModels": len(api_models),
-            },
-            "stats": overview_stats,
+        total_content_size = sum(len(chat["content"]) for chat in chat_payloads)
+        stats = self._build_stats(
+            total_content_size,
+            len(chat_payloads),
+            len(browser_models),
+            len(api_models),
+        )
+
+        overview_payload = {
+            "stats": stats,
             "browserModels": browser_models,
             "apiModels": api_models,
             "roles": roles,
-            "categories": categories,
-            "projects": projects,
-            "chats": chat_payloads,
+            "recentChats": chat_payloads[:12],
         }
+
+        categories_payload = {
+            "categories": categories,
+        }
+
+        projects_payload = {
+            "projects": projects,
+        }
+
+        recent_payload = {
+            "recentChats": chat_payloads,
+        }
+
+        return {
+            "overview": overview_payload,
+            "categories": categories_payload,
+            "projects": projects_payload,
+            "recent": recent_payload,
+        }
+
+    def _payload_signature(self, payload):
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+    def _poll_dashboard_updates(self):
+        payload = self._build_page_payloads()
+        signature = self._payload_signature(payload)
+        if signature != self._last_payload_signature:
+            self.refresh_dashboard()
+
+    def refresh_dashboard(self, force_reload=False):
+        payload = self._build_page_payloads()
+        self._last_payload_signature = self._payload_signature(payload)
+
+        self.overview_page.set_payload(payload["overview"])
+        self.categories_page.set_payload(payload["categories"])
+        self.projects_page.set_payload(payload["projects"])
+        self.recent_page.set_payload(payload["recent"])
 
     def _category_dot(self, category_name: str) -> str:
         normalized = category_name.lower()
@@ -372,51 +488,3 @@ class HomeTab(QWidget):
         if total_content_size < 1024 * 1024:
             return f"{total_content_size / 1024:.1f} KB"
         return f"{total_content_size / (1024 * 1024):.1f} MB"
-
-    def _payload_signature(self, payload):
-        return json.dumps(payload, ensure_ascii=False, sort_keys=True)
-
-    def _push_payload_to_view(self, payload):
-        self._last_rendered_payload = payload
-        self._last_payload_signature = self._payload_signature(payload)
-        self.browser.page().runJavaScript(
-            f"window.__LLMCONNECT_RENDER__({json.dumps(payload, ensure_ascii=False)});"
-        )
-
-    def _on_dashboard_load_finished(self, ok):
-        self._dashboard_loaded = ok
-        if ok and self._last_rendered_payload is not None:
-            self._push_payload_to_view(self._last_rendered_payload)
-
-    def _poll_dashboard_updates(self):
-        payload = self._build_dashboard_payload()
-        signature = self._payload_signature(payload)
-        if signature != self._last_payload_signature:
-            if self._dashboard_loaded:
-                self._push_payload_to_view(payload)
-            else:
-                self.refresh_dashboard(force_reload=True)
-
-    def refresh_dashboard(self, force_reload=False):
-        payload = self._build_dashboard_payload()
-        self._last_rendered_payload = payload
-        signature = self._payload_signature(payload)
-
-        if force_reload or not self._dashboard_loaded:
-            json_data = _escape_json_for_script(json.dumps(payload, ensure_ascii=False))
-            try:
-                with open(DASHBOARD_HTML_PATH, "r", encoding="utf-8") as handle:
-                    html_template = handle.read()
-            except Exception:
-                html_template = (
-                    "<html><body><pre>Unable to load dashboard.html</pre></body></html>"
-                )
-
-            html_document = html_template.replace("__APP_DATA__", json_data)
-            self._last_payload_signature = signature
-            base = QUrl.fromLocalFile(os.path.dirname(DASHBOARD_HTML_PATH) + os.sep)
-            self.browser.setHtml(html_document, base)
-            return
-
-        if signature != self._last_payload_signature:
-            self._push_payload_to_view(payload)

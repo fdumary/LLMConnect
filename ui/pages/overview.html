@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Overview</title>
+    <link rel="stylesheet" href="../dashboard.css">
+</head>
+<body>
+<div class="app-shell">
+    <aside class="sidebar">
+        <div class="brand">
+            <img class="brand-mark" width="25" height="25" src="../assets/llmconnect-icon.png" alt="LLMConnect logo">
+            <div class="brand-copy">
+                <div class="brand-title">LLMConnect</div>
+                <div class="brand-subtitle">Unified LLM hub</div>
+            </div>
+        </div>
+
+        <div class="search-pill">
+            <span class="search-icon" aria-hidden="true"></span>
+            <span>Main Menu</span>
+        </div>
+
+        <div class="sidebar-scroll">
+            <div class="section-label">Navigation</div>
+            <div class="nav-list">
+                <button class="nav-item active" type="button" data-nav="overview">
+                    <span class="nav-label"><span class="nav-dot blue" aria-hidden="true"></span>Overview</span>
+                </button>
+                <button class="nav-item" type="button" data-nav="categories">
+                    <span class="nav-label"><span class="nav-dot teal" aria-hidden="true"></span>Categories</span>
+                </button>
+                <button class="nav-item" type="button" data-nav="projects">
+                    <span class="nav-label"><span class="nav-dot violet" aria-hidden="true"></span>Projects</span>
+                </button>
+                <button class="nav-item" type="button" data-nav="recent">
+                    <span class="nav-label"><span class="nav-dot amber" aria-hidden="true"></span>Recent Chats</span>
+                </button>
+            </div>
+        </div>
+    </aside>
+
+    <main class="content">
+        <div class="content-scroll">
+            <header class="page-header">
+                <div class="page-copy">
+                    <div class="eyebrow">Main Menu</div>
+                    <h1 class="page-title">Overview</h1>
+                    <p class="page-description">Overview cards followed by LLM Models, role mapping, and recent activity.</p>
+                </div>
+                <div class="header-actions">
+                    <button class="action-btn" type="button" data-action="add-browser">Add Browser Model</button>
+                    <button class="action-btn primary" type="button" data-action="add-api">Add API Key</button>
+                </div>
+            </header>
+
+            <section class="section">
+                <div id="stats" class="stat-grid"></div>
+            </section>
+
+            <nav class="tab-strip" aria-label="Overview sections">
+                <button class="tab-btn active" type="button" data-tab="llmmodels">LLM Models</button>
+                <button class="tab-btn" type="button" data-tab="roles">Roles and Personas</button>
+                <button class="tab-btn" type="button" data-tab="recent">Recent Activities</button>
+            </nav>
+
+            <section class="panel">
+                <div id="panel"></div>
+            </section>
+        </div>
+    </main>
+</div>
+
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script>
+let data = __APP_DATA__;
+let activeTab = "llmmodels";
+let llmConnectBridge = null;
+
+function esc(v) {
+    return String(v ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+}
+
+function renderStats() {
+    const stats = data.stats || [];
+    document.getElementById("stats").innerHTML = stats
+        .map(
+            (s) => `
+        <article class="stat-card">
+            <div class="stat-top">
+                <span class="stat-label">${esc(s.label)}</span>
+                <span class="badge">${esc(s.badge || "")}</span>
+            </div>
+            <div class="stat-value">${esc(s.value)}</div>
+            <div class="stat-sublabel">${esc(s.sublabel || "")}</div>
+        </article>
+    `
+        )
+        .join("");
+}
+
+function renderLlmModels() {
+    const browser = data.browserModels || [];
+    const api = data.apiModels || [];
+
+    const browserHtml = browser
+        .map(
+            (m) => `
+        <article class="model-card">
+            <div class="model-top">
+                <div class="avatar">${esc(m.avatar || "💬")}</div>
+                <span class="badge"><span class="status-dot ${m.status === "idle" ? "idle" : ""}"></span>${esc(m.statusLabel || "Connected")}</span>
+            </div>
+            <div class="model-copy">
+                <p class="model-name">${esc(m.modelName || m.name || "Unknown")}</p>
+                <p class="model-provider">${esc(m.provider || "Browser Session")}</p>
+                ${m.roleName ? `<p class="model-role">Role: ${esc(m.roleName)}</p>` : ""}
+            </div>
+            <div class="card-footer">
+                <span>${esc(m.tabName || "-")}</span>
+                <span>Chats: ${esc(m.chats ?? 0)} · ${esc(m.lastUsed || "Not used")}</span>
+            </div>
+        </article>
+    `
+        )
+        .join("");
+
+    const apiHtml = api
+        .map(
+            (m) => `
+        <article class="model-card">
+            <div class="model-top">
+                <div class="avatar">${esc(m.avatar || "🔐")}</div>
+                <span class="badge"><span class="status-dot"></span>${esc(m.statusLabel || "Configured")}</span>
+            </div>
+            <div class="model-copy">
+                <p class="model-name">${esc(m.apiName || m.name || "API Model")}</p>
+                <p class="model-provider">${esc(m.provider || m.modelName || m.model || "")}</p>
+                ${m.roleName ? `<p class="model-role">Role: ${esc(m.roleName)}</p>` : ""}
+            </div>
+            <div class="card-footer">
+                <span>${esc(m.maskedKey || "")}</span>
+                <span>Tokens: ${esc(m.tokensUsed ?? 0)} · ${esc(m.lastUsed || "Not used")}</span>
+            </div>
+        </article>
+    `
+        )
+        .join("");
+
+    return `
+        <div style="display:flex;flex-direction:column;gap:16px;">
+            <article class="card">
+                <h2 class="card-title">Active Browser Models (${browser.length})</h2>
+                <div class="card-subtitle">Browser tabs currently mapped to the desktop app</div>
+                ${browser.length ? `<div class="model-grid">${browserHtml}</div>` : '<div class="empty-state">No active browser models.</div>'}
+            </article>
+
+            <article class="card">
+                <h2 class="card-title">API Models (${api.length})</h2>
+                <div class="card-subtitle">Encrypted local API key profiles</div>
+                ${api.length ? `<div class="model-grid">${apiHtml}</div>` : '<div class="empty-state">No API profiles configured.</div>'}
+            </article>
+
+            <article class="card">
+                <h2 class="card-title">Quick Actions</h2>
+                <div class="card-subtitle">Shortcuts for adding browser models and API keys</div>
+                <div class="quick-actions">
+                    <button class="action-btn" type="button" data-action="add-browser">Add Browser Model</button>
+                    <button class="action-btn" type="button" data-action="add-api">Add API Key</button>
+                </div>
+            </article>
+        </div>
+    `;
+}
+
+function renderRoles() {
+    const roles = data.roles || [];
+    if (!roles.length) {
+        return '<div class="empty-state">No roles available.</div>';
+    }
+
+    return `
+        <div class="card">
+            <h2 class="card-title">Roles and Assigned Models</h2>
+            <div class="card-subtitle">Role-to-model mapping from browser tabs and API profiles</div>
+            <div class="role-grid">
+            ${roles
+                .map(
+                    (r) => `
+                <article class="role-card">
+                    <div class="role-top">
+                        <span class="role-dot ${esc(r.accent || "blue")}"></span>
+                        <div class="role-copy">
+                            <p class="role-name">${esc(r.name)}</p>
+                            <p class="role-description">${esc(r.description || "")}</p>
+                        </div>
+                        <span class="badge">${esc(r.modelCount ?? 0)} models</span>
+                    </div>
+                    ${(r.modelNames || []).length ? `<div class="pill-row">${r.modelNames.map((name) => `<span class="tag">${esc(name)}</span>`).join("")}</div>` : ""}
+                </article>
+            `
+                )
+                .join("")}
+            </div>
+        </div>
+    `;
+}
+
+function renderRecent() {
+    const chats = data.recentChats || [];
+    if (!chats.length) {
+        return '<div class="empty-state">No recent chats.</div>';
+    }
+
+    return `
+        <div class="card list-card">
+            ${chats
+                .map(
+                    (c) => `
+                <article class="chat-row">
+                    <div class="chat-main">
+                        <p class="chat-title">${esc(c.title)}</p>
+                        <div class="chat-meta">${esc(c.category)} • ${esc(c.createdLabel || "")}</div>
+                        <div class="chat-snippet">${esc(c.snippet || "")}</div>
+                    </div>
+                    <div class="chat-side">
+                        <div>${esc(c.createdTime || "")}</div>
+                        <div>${esc(c.messageCount || 0)} msgs</div>
+                    </div>
+                </article>
+            `
+                )
+                .join("")}
+        </div>
+    `;
+}
+
+function renderPanel() {
+    const panel = document.getElementById("panel");
+    if (activeTab === "llmmodels") {
+        panel.innerHTML = renderLlmModels();
+    } else if (activeTab === "roles") {
+        panel.innerHTML = renderRoles();
+    } else {
+        panel.innerHTML = renderRecent();
+    }
+
+    document.querySelectorAll("[data-tab]").forEach((b) => {
+        b.classList.toggle("active", b.dataset.tab === activeTab);
+    });
+}
+
+function renderAll() {
+    renderStats();
+    renderPanel();
+}
+
+window.__PAGE_RENDER__ = (nextData) => {
+    data = nextData;
+    renderAll();
+};
+
+document.addEventListener("click", (event) => {
+    const nav = event.target.closest("[data-nav]");
+    if (nav && llmConnectBridge) {
+        llmConnectBridge.navigate(nav.dataset.nav);
+        return;
+    }
+
+    const tab = event.target.closest("[data-tab]");
+    if (tab) {
+        activeTab = tab.dataset.tab;
+        renderPanel();
+        return;
+    }
+
+    const action = event.target.closest("[data-action]");
+    if (!action || !llmConnectBridge) return;
+    if (action.dataset.action === "add-browser") llmConnectBridge.openAddBrowserModel();
+    if (action.dataset.action === "add-api") llmConnectBridge.openAddApiKey();
+});
+
+new QWebChannel(qt.webChannelTransport, (channel) => {
+    llmConnectBridge = channel.objects.llmConnectBridge;
+});
+
+renderAll();
+</script>
+</body>
+</html>

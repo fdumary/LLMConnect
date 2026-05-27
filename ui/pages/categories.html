@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Categories</title>
+    <link rel="stylesheet" href="../dashboard.css">
+    <style>
+        .page-body { padding: 0 28px 28px; }
+        .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 16px; }
+        .item-btn { width: 100%; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 12px; padding: 10px 12px; color: var(--muted-strong); cursor: pointer; }
+        .item-btn:hover { background: rgba(255, 255, 255, 0.03); border-color: rgba(255, 255, 255, 0.06); color: var(--foreground); }
+        .item-btn.active { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.09); color: var(--foreground); }
+        .meta-list { display: grid; gap: 8px; color: var(--muted-strong); font-size: 13px; }
+        @media (max-width: 1280px) { .split { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+<div class="app-shell">
+    <aside class="sidebar">
+        <div class="brand">
+            <img class="brand-mark" width="25" height="25" src="../assets/llmconnect-icon.png" alt="LLMConnect logo">
+            <div class="brand-copy">
+                <div class="brand-title">LLMConnect</div>
+                <div class="brand-subtitle">Unified LLM hub</div>
+            </div>
+        </div>
+
+        <div class="search-pill">
+            <span class="search-icon" aria-hidden="true"></span>
+            <span>Main Menu</span>
+        </div>
+
+        <div class="sidebar-scroll">
+            <div class="section-label">Navigation</div>
+            <div class="nav-list">
+                <button class="nav-item" type="button" data-nav="overview"><span class="nav-label"><span class="nav-dot blue"></span>Overview</span></button>
+                <button class="nav-item active" type="button" data-nav="categories"><span class="nav-label"><span class="nav-dot teal"></span>Categories</span></button>
+                <button class="nav-item" type="button" data-nav="projects"><span class="nav-label"><span class="nav-dot violet"></span>Projects</span></button>
+                <button class="nav-item" type="button" data-nav="recent"><span class="nav-label"><span class="nav-dot amber"></span>Recent Chats</span></button>
+            </div>
+        </div>
+    </aside>
+
+    <main class="content">
+        <div class="content-scroll">
+            <header class="page-header">
+                <div class="page-copy">
+                    <div class="eyebrow">Main Menu</div>
+                    <h1 class="page-title">Categories</h1>
+                    <p class="page-description">Create categories such as Research, Development, or Support and inspect each category details on the right panel.</p>
+                </div>
+                <div class="header-actions">
+                    <button class="action-btn primary" type="button" data-action="add-category">+ Add Category</button>
+                </div>
+            </header>
+
+            <section class="page-body">
+                <div class="split">
+                    <article class="card">
+                        <h2 class="card-title">Category List</h2>
+                        <div id="list"></div>
+                    </article>
+                    <article class="card">
+                        <h2 class="card-title">Category Details</h2>
+                        <div id="details"></div>
+                    </article>
+                </div>
+            </section>
+        </div>
+    </main>
+</div>
+
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script>
+let data = __APP_DATA__;
+let selectedId = null;
+let llmConnectBridge = null;
+
+function esc(v) {
+    return String(v ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+}
+
+function renderAll() {
+    const categories = data.categories || [];
+    if (!selectedId && categories.length) selectedId = categories[0].id;
+    const active = categories.find((c) => c.id === selectedId) || null;
+
+    document.getElementById("list").innerHTML = categories.length
+        ? categories
+              .map(
+                  (c) => `<button class="item-btn ${c.id === selectedId ? "active" : ""}" data-id="${esc(c.id)}">${esc(c.name)} (${esc(c.count || 0)})</button>`
+              )
+              .join("")
+        : '<div class="empty-state">No categories.</div>';
+
+    document.getElementById("details").innerHTML = active
+        ? `<div class="meta-list">
+            <div><strong>ID:</strong> ${esc(active.id)}</div>
+            <div><strong>Name:</strong> ${esc(active.name)}</div>
+            <div><strong>Description:</strong> ${esc(active.description || "-")}</div>
+            <div><strong>Total Chats:</strong> ${esc(active.count || 0)}</div>
+        </div>`
+        : '<div class="empty-state">Select a category from the left.</div>';
+}
+
+window.__PAGE_RENDER__ = (nextData) => {
+    data = nextData;
+    renderAll();
+};
+
+document.addEventListener("click", (event) => {
+    const nav = event.target.closest("[data-nav]");
+    if (nav && llmConnectBridge) {
+        llmConnectBridge.navigate(nav.dataset.nav);
+        return;
+    }
+
+    const addBtn = event.target.closest('[data-action="add-category"]');
+    if (addBtn && llmConnectBridge) {
+        llmConnectBridge.addCategory();
+        return;
+    }
+
+    const row = event.target.closest("[data-id]");
+    if (row) {
+        selectedId = row.dataset.id;
+        renderAll();
+    }
+});
+
+new QWebChannel(qt.webChannelTransport, (channel) => {
+    llmConnectBridge = channel.objects.llmConnectBridge;
+});
+
+renderAll();
+</script>
+</body>
+</html>

@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Recent Chats</title>
+    <link rel="stylesheet" href="../dashboard.css">
+    <style>
+        .recent-body { padding: 0 28px 28px; }
+    </style>
+</head>
+<body>
+<div class="app-shell">
+    <aside class="sidebar">
+        <div class="brand">
+            <img class="brand-mark" width="25" height="25" src="../assets/llmconnect-icon.png" alt="LLMConnect logo">
+            <div class="brand-copy">
+                <div class="brand-title">LLMConnect</div>
+                <div class="brand-subtitle">Unified LLM hub</div>
+            </div>
+        </div>
+
+        <div class="search-pill">
+            <span class="search-icon" aria-hidden="true"></span>
+            <span>Main Menu</span>
+        </div>
+
+        <div class="sidebar-scroll">
+            <div class="section-label">Navigation</div>
+            <div class="nav-list">
+                <button class="nav-item" type="button" data-nav="overview"><span class="nav-label"><span class="nav-dot blue"></span>Overview</span></button>
+                <button class="nav-item" type="button" data-nav="categories"><span class="nav-label"><span class="nav-dot teal"></span>Categories</span></button>
+                <button class="nav-item" type="button" data-nav="projects"><span class="nav-label"><span class="nav-dot violet"></span>Projects</span></button>
+                <button class="nav-item active" type="button" data-nav="recent"><span class="nav-label"><span class="nav-dot amber"></span>Recent Chats</span></button>
+            </div>
+        </div>
+    </aside>
+
+    <main class="content">
+        <div class="content-scroll">
+            <header class="page-header">
+                <div class="page-copy">
+                    <div class="eyebrow">Main Menu</div>
+                    <h1 class="page-title">Recent Chats</h1>
+                    <p class="page-description">Latest saved conversations with category and timestamp details.</p>
+                </div>
+            </header>
+
+            <section class="recent-body">
+                <div id="list" class="list-card"></div>
+            </section>
+        </div>
+    </main>
+</div>
+
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script>
+let data = __APP_DATA__;
+let llmConnectBridge = null;
+
+function esc(v) {
+    return String(v ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+}
+
+function renderAll() {
+    const chats = data.recentChats || [];
+    document.getElementById("list").innerHTML = chats.length
+        ? chats
+              .map(
+                  (c) => `
+            <div class="chat-row">
+                <div class="chat-main">
+                    <p class="chat-title">${esc(c.title)}</p>
+                    <div class="chat-meta">${esc(c.category)} • ${esc(c.createdLabel || "")}</div>
+                    <div class="chat-snippet">${esc(c.snippet || "")}</div>
+                </div>
+            </div>
+        `
+              )
+              .join("")
+        : '<div class="empty-state">No recent chats.</div>';
+}
+
+window.__PAGE_RENDER__ = (nextData) => {
+    data = nextData;
+    renderAll();
+};
+
+document.addEventListener("click", (event) => {
+    const nav = event.target.closest("[data-nav]");
+    if (nav && llmConnectBridge) {
+        llmConnectBridge.navigate(nav.dataset.nav);
+    }
+});
+
+new QWebChannel(qt.webChannelTransport, (channel) => {
+    llmConnectBridge = channel.objects.llmConnectBridge;
+});
+
+renderAll();
+</script>
+</body>
+</html>

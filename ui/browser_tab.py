@@ -1,5 +1,6 @@
 import os
 from dataclasses import dataclass
+from datetime import datetime
 from PyQt6.QtWidgets import QWidget, QVBoxLayout
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineProfile
@@ -43,7 +44,7 @@ class BrowserData:
     def _model(self):
         if not self.model:
             raise ValueError("Model is not set")
-        return self._model
+        return self.model
 
     @property
     def _url(self):
@@ -101,7 +102,11 @@ class BrowserTab(QWidget):
     def __init__(self, data: BrowserData):
         super().__init__()
         self.name = data._name
+        self.model_name = data.model
+        self.role_name = data.role_id or ""
         self.url = data._url
+        self.chat_count = 0
+        self.last_used_at = datetime.now()
 
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)

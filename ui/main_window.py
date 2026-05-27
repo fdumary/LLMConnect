@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import (
     QTabBar,
     QTabWidget,
 )
+from datetime import datetime
 
 from engine.secure_store import SecureApiKeyStore
 from ui.browser_tab import BrowserTab, BrowserData
@@ -46,6 +47,10 @@ class MainWindow(QMainWindow):
         self.active_browser_tab_name = (
             tab_name if tab_name in self.browser_tabs_map else None
         )
+        if self.active_browser_tab_name:
+            tab = self.browser_tabs_map.get(self.active_browser_tab_name)
+            if tab is not None:
+                tab.last_used_at = datetime.now()
         self.home_tab.refresh_dashboard()
 
     def prompt_new_api_key(self):
@@ -85,6 +90,7 @@ class MainWindow(QMainWindow):
                 return
 
             new_tab = BrowserTab(data)
+            new_tab.last_used_at = datetime.now()
 
             self.browser_tabs_map[dialog.selected_name] = new_tab
             self.tabs.addTab(new_tab, dialog.selected_name)
