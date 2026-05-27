@@ -9,7 +9,6 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebChannel import QWebChannel
 
 from engine.db import Database
-from engine.ollama_client import OllamaClient
 from engine.secure_store import SecureApiKeyStore
 
 # Path to the external dashboard HTML used by the QWebEngine view
@@ -90,7 +89,6 @@ class HomeTab(QWidget):
         super().__init__()
         self.main_window = main_window
         self.db = Database()
-        self.ollama_client = OllamaClient()
         self.bridge = DashboardBridge(self)
         self._dashboard_loaded = False
         self._last_payload_signature = None
@@ -103,7 +101,6 @@ class HomeTab(QWidget):
         self.channel.registerObject("llmConnectBridge", self.bridge)
         self.browser.page().setWebChannel(self.channel)
         self.browser.loadFinished.connect(self._on_dashboard_load_finished)
-        self.layout.addWidget(self.browser)
 
         self.refresh_timer = QTimer(self)
         self.refresh_timer.timeout.connect(self._poll_dashboard_updates)

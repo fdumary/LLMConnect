@@ -48,18 +48,6 @@ class MainWindow(QMainWindow):
         )
         self.home_tab.refresh_dashboard()
 
-    def prompt_new_browser_model(self):
-        dialog = BrowserModelDialog(self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-
-            data = BrowserData()
-            data.set_name(dialog.selected_name)
-            data.set_model(dialog.selected_model)
-            data.set_role_id(dialog.selected_role_name)
-
-            self.add_browser_tab(data)
-            self.home_tab.refresh_dashboard()
-
     def prompt_new_api_key(self):
         dialog = ApiKeyDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -79,22 +67,29 @@ class MainWindow(QMainWindow):
                 f"Saved {saved['name']} for {saved['model']} securely on disk.",
             )
 
-    def prompt_new_tab(self):
-        self.prompt_new_browser_model()
+    def prompt_new_browser_model(self):
+        dialog = BrowserModelDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
 
-    def add_browser_tab(self, data: BrowserData):
-        name = data.name or "Browser Tab"
-        if name in self.browser_tabs_map:
-            QMessageBox.warning(
-                self, "Error", f"Tab with name '{name}' already exists."
-            )
-            return
+            data = BrowserData()
+            data.set_name(dialog.selected_name)
+            data.set_model(dialog.selected_model)
+            data.set_role_id(dialog.selected_role_name)
 
-        new_tab = BrowserTab(data)
+            if dialog.selected_name in self.browser_tabs_map:
+                QMessageBox.warning(
+                    self,
+                    "Error",
+                    f"Tab with name '{dialog.selected_name}' already exists.",
+                )
+                return
 
-        self.browser_tabs_map[name] = new_tab
-        self.tabs.addTab(new_tab, name)
-        self.home_tab.refresh_dashboard()
+            new_tab = BrowserTab(data)
+
+            self.browser_tabs_map[dialog.selected_name] = new_tab
+            self.tabs.addTab(new_tab, dialog.selected_name)
+
+            self.home_tab.refresh_dashboard()
 
     def close_tab(self, index):
         if index == 0:
