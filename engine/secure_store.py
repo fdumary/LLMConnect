@@ -3,6 +3,9 @@ import os
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+import urllib.error
+import urllib.parse
+import urllib.request
 
 from cryptography.fernet import Fernet
 
@@ -73,6 +76,152 @@ class SecureApiKeyStore:
         if len(cleaned) <= 8:
             return "*" * max(4, len(cleaned))
         return f"{cleaned[:4]}...{cleaned[-4:]}"
+
+    def validate_api_key(
+        self,
+        name: str,
+        model: str,
+        api_key: str,
+        url: str = "",
+        type: str = "",
+    ) -> tuple[bool, str]:
+        normalized_name = (name or "").strip()
+        normalized_model = (model or "").strip()
+        normalized_api_key = (api_key or "").strip()
+        normalized_url = (url or "").strip().rstrip("/")
+        normalized_type = (type or "").strip().lower()
+
+        if not normalized_name:
+            return False, "API name is required."
+        if not normalized_model:
+            return False, "API model is required."
+        if not normalized_api_key:
+            return False, "API key is required."
+        if not normalized_url:
+            return False, "API endpoint URL is required."
+
+        validators = {
+            "openai": self._validate_openai_compatible,
+            "deepseek": self._validate_openai_compatible,
+            "anthropic": self._validate_anthropic,
+            "google": self._validate_google,
+            "gemini": self._validate_google,
+        }
+        validator = validators.get(normalized_type)
+        if not validator:
+            return False, f"Unsupported API type: {normalized_type}."
+
+        return validator(normalized_url, normalized_model, normalized_api_key)
+
+    def _validate_openai_compatible(
+        self, base_url: str, model: str, api_key: str
+    ) -> tuple[bool, str]:
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "llmConnect/1.0",
+        }
+
+        request = urllib.request.Request(
+            f"{base_url}/models", headers=headers, method="GET"
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                if 200 <= getattr(response, "status", 200) < 300:
+                    return True, f"Validated access for {model}."
+        except urllib.error.HTTPError as exc:
+            if exc.code in {401, 403}:
+                return False, "API key was rejected by the provider."
+        except Exception:
+            pass
+
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": "ping"}],
+            "temperature": 0,
+            "max_tokens": 1,
+        }
+        request = urllib.request.Request(
+            f"{base_url}/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                if 200 <= getattr(response, "status", 200) < 300:
+                    return True, f"Validated access for {model}."
+        except urllib.error.HTTPError as exc:
+            if exc.code in {401, 403}:
+                return False, "API key was rejected by the provider."
+            return False, f"Validation failed with HTTP {exc.code}."
+        except Exception as exc:
+            return False, f"Validation failed: {exc}."
+
+        return False, "Validation failed."
+
+    def _validate_anthropic(
+        self, base_url: str, model: str, api_key: str
+    ) -> tuple[bool, str]:
+        payload = {
+            "model": model,
+            "max_tokens": 1,
+            "temperature": 0,
+            "messages": [{"role": "user", "content": "ping"}],
+        }
+        request = urllib.request.Request(
+            f"{base_url}/v1/messages",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json",
+                "User-Agent": "llmConnect/1.0",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                if 200 <= getattr(response, "status", 200) < 300:
+                    return True, f"Validated access for {model}."
+        except urllib.error.HTTPError as exc:
+            if exc.code in {401, 403}:
+                return False, "API key was rejected by the provider."
+            return False, f"Validation failed with HTTP {exc.code}."
+        except Exception as exc:
+            return False, f"Validation failed: {exc}."
+
+        return False, "Validation failed."
+
+    def _validate_google(
+        self, base_url: str, model: str, api_key: str
+    ) -> tuple[bool, str]:
+        endpoint = (
+            f"{base_url}/v1beta/models/"
+            f"{urllib.parse.quote(model, safe='')}:generateContent?key={urllib.parse.quote(api_key)}"
+        )
+        payload = {
+            "contents": [{"parts": [{"text": "ping"}]}],
+            "generationConfig": {"temperature": 0, "maxOutputTokens": 1},
+        }
+        request = urllib.request.Request(
+            endpoint,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "llmConnect/1.0",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                if 200 <= getattr(response, "status", 200) < 300:
+                    return True, f"Validated access for {model}."
+        except urllib.error.HTTPError as exc:
+            if exc.code in {401, 403}:
+                return False, "API key was rejected by the provider."
+            return False, f"Validation failed with HTTP {exc.code}."
+        except Exception as exc:
+            return False, f"Validation failed: {exc}."
+
+        return False, "Validation failed."
 
     def list_api_keys(self) -> list[dict]:
         records = self._read_records()

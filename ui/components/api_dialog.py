@@ -85,19 +85,19 @@ class ApiKeyDialog(QDialog):
         self._sync_models_for_type(self.type_input.currentIndex())
 
     def get_roles(self) -> list[dict]:
-        # read the file names from the skills/API directory and return a list of dict with name and skill is actually the content of the file
-        skills_dir = os.path.abspath(
+        api_dir = os.path.abspath(
             os.path.join(os.path.dirname(__file__), "..", "..", "skills", "API")
         )
         roles = []
-        if os.path.exists(skills_dir) and os.path.isdir(skills_dir):
-            for filename in os.listdir(skills_dir):
-                if filename.endswith(".md"):
-                    role_name = os.path.splitext(filename)[0]
-                    skill_path = os.path.join(skills_dir, filename)
-                    with open(skill_path, "r", encoding="utf-8") as handle:
-                        skill_content = handle.read()
-                    roles.append({"name": role_name, "skill": skill_content})
+        if os.path.exists(api_dir) and os.path.isdir(api_dir):
+            for filename in os.listdir(api_dir):
+                if not filename.endswith(".md"):
+                    continue
+                role_name = os.path.splitext(filename)[0]
+                skill_path = os.path.join(api_dir, filename)
+                with open(skill_path, "r", encoding="utf-8") as handle:
+                    skill_content = handle.read().strip()
+                roles.append({"name": role_name, "skill": skill_content})
         return roles
 
     def _models_for_type(self, model_type: str) -> list[dict]:

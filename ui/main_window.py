@@ -137,6 +137,17 @@ class MainWindow(QMainWindow):
     def prompt_new_api_key(self):
         dialog = ApiKeyDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
+            is_valid, validation_message = self.api_key_store.validate_api_key(
+                dialog.api_name,
+                dialog.api_model,
+                dialog.api_key,
+                dialog.api_url,
+                dialog.api_type,
+            )
+            if not is_valid:
+                QMessageBox.warning(self, "API key validation failed", validation_message)
+                return
+
             saved = self.api_key_store.save_api_key(
                 dialog.api_name,
                 dialog.api_model,
@@ -150,7 +161,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "API key saved",
-                f"Saved {saved['name']} for {saved['model']} securely on disk.",
+                f"Saved {saved['name']} for {saved['model']} securely on disk.\n{validation_message}",
             )
 
     def prompt_new_browser_model(self):
