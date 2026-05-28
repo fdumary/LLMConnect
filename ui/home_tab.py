@@ -1,11 +1,19 @@
+import os
 import json
 from collections import defaultdict
 from datetime import datetime
 
 from PyQt6.QtCore import QTimer
-from PyQt6.QtWidgets import QInputDialog, QStackedWidget, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QFileDialog,
+    QInputDialog,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from engine.db import Database, SavedChat
+from engine.chat_classifier import ChatClassifier
 from engine.ollama_client import OllamaClient
 from engine.secure_store import SecureApiKeyStore
 from ui.pages.categories_page import CategoriesPage
@@ -42,6 +50,51 @@ def _snippet_from_content(content: str, limit: int = 180) -> str:
     return normalized[: limit - 1].rstrip() + "..."
 
 
+def _parse_chat_content(content: str) -> dict | None:
+    if not content:
+        return None
+    try:
+        parsed = json.loads(content)
+    except Exception:
+        return None
+    if isinstance(parsed, dict) and isinstance(parsed.get("messages"), list):
+        return parsed
+    return None
+
+
+def _chat_text_from_messages(messages: list[dict]) -> str:
+    parts = []
+    for message in messages:
+        role = (message.get("role") or "message").upper()
+        text = (message.get("text") or "").strip()
+        images = message.get("images") or []
+        image_labels = []
+        for image in images:
+            alt = (image.get("alt") or image.get("title") or "image").strip()
+            src = (image.get("src") or "").strip()
+            image_labels.append(f"[Image: {alt or src or 'image'}]")
+        message_text = " ".join(part for part in [text, *image_labels] if part).strip()
+        if message_text:
+            parts.append(f"[{role}] {message_text}")
+    return "\n\n".join(parts)
+
+
+def _content_preview(content: str, limit: int = 180) -> str:
+    structured = _parse_chat_content(content)
+    if structured:
+        return _snippet_from_content(
+            _chat_text_from_messages(structured.get("messages", [])), limit
+        )
+    return _snippet_from_content(content, limit)
+
+
+def _count_images(messages: list[dict]) -> int:
+    total = 0
+    for message in messages:
+        total += len(message.get("images") or [])
+    return total
+
+
 def _slugify(value: str) -> str:
     slug = []
     for char in value.lower():
@@ -72,6 +125,8 @@ class HomeTab(QWidget):
         self.main_window = main_window
         self.db = Database()
         self.ollama_client = OllamaClient()
+        self.api_key_store = SecureApiKeyStore()
+        self.chat_classifier = ChatClassifier(self.ollama_client, self.api_key_store)
         self._last_payload_signature = None
         self.custom_categories = []
         self.custom_projects = []
@@ -95,7 +150,11 @@ class HomeTab(QWidget):
             on_navigate=self._navigate,
             on_add_project=self._add_project,
         )
-        self.recent_page = RecentChatsPage(on_navigate=self._navigate)
+        self.recent_page = RecentChatsPage(
+            on_navigate=self._navigate,
+            on_import_chats=self._import_recent_chats,
+            on_export_chats=self._export_recent_chats,
+        )
 
         self.page_map = {
             "overview": 0,
@@ -116,29 +175,50 @@ class HomeTab(QWidget):
         self.refresh_dashboard()
 
     def handle_extracted_chat(self, payload: dict):
-        content = (payload.get("content") or "").strip()
-        if not content:
+        if not isinstance(payload, dict):
             return
 
-        model_name = (payload.get("modelName") or "LLM").strip()
-        category = "Uncategorized"
-        title = f"{model_name} Chat"
+        raw_content = payload.get("content") or ""
+        structured_content = (
+            raw_content
+            if isinstance(raw_content, str)
+            else json.dumps(raw_content, ensure_ascii=False)
+        )
+        structured = _parse_chat_content(structured_content)
 
-        if self.ollama_client.base_url:
-            try:
-                categorized = self.ollama_client.categorize_chat("llama3", content)
-                raw_response = categorized.get("response", "") if isinstance(categorized, dict) else ""
-                parsed = json.loads(raw_response) if raw_response else {}
-                category = (parsed.get("category") or category).strip() or category
-                title = (parsed.get("title") or title).strip() or title
-            except Exception:
-                pass
+        if structured:
+            messages = structured.get("messages", [])
+            chat_text = _chat_text_from_messages(messages)
+            content_to_save = json.dumps(structured, ensure_ascii=False, indent=2)
+        else:
+            chat_text = str(raw_content).strip()
+            if not chat_text:
+                return
+            content_to_save = chat_text
+
+        model_name = (payload.get("modelName") or "LLM").strip()
+        classification = {}
+        try:
+            classification = self.chat_classifier.classify(chat_text)
+        except Exception:
+            classification = {}
+
+        category = (
+            classification.get("category") or "Uncategorized"
+        ).strip() or "Uncategorized"
+        project = (
+            classification.get("project") or category or "General"
+        ).strip() or "General"
+        title = (
+            classification.get("title") or f"{model_name} Chat"
+        ).strip() or f"{model_name} Chat"
 
         self.db.save_chat(
             SavedChat(
                 title=title,
                 category=category,
-                content=content,
+                project=project,
+                content=content_to_save,
                 created_at=datetime.now().isoformat(),
             )
         )
@@ -202,6 +282,112 @@ class HomeTab(QWidget):
         self.custom_projects.append(item)
         self.refresh_dashboard()
 
+    def _export_recent_chats(self):
+        default_path = os.path.join(os.path.expanduser("~"), "llmconnect-chats.json")
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Chats",
+            default_path,
+            "JSON Files (*.json)",
+        )
+        if not file_path:
+            return
+
+        chats = self.db.get_all_chats()
+        export_payload = {
+            "format": "llmconnect.export.chats.v1",
+            "exportedAt": datetime.now().isoformat(),
+            "chats": [
+                {
+                    "id": chat.id,
+                    "title": chat.title,
+                    "category": chat.category,
+                    "project": chat.project,
+                    "content": chat.content,
+                    "createdAt": chat.created_at,
+                }
+                for chat in chats
+            ],
+        }
+
+        with open(file_path, "w", encoding="utf-8") as handle:
+            json.dump(export_payload, handle, ensure_ascii=False, indent=2)
+
+    def _import_recent_chats(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import Chats",
+            os.path.expanduser("~"),
+            "JSON Files (*.json)",
+        )
+        if not file_path:
+            return
+
+        with open(file_path, "r", encoding="utf-8") as handle:
+            imported = json.load(handle)
+
+        if isinstance(imported, dict):
+            items = imported.get("chats")
+            if items is None and isinstance(imported.get("messages"), list):
+                items = [imported]
+        elif isinstance(imported, list):
+            items = imported
+        else:
+            items = None
+
+        if not isinstance(items, list):
+            return
+
+        imported_count = 0
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+
+            content = item.get("content")
+            if content is None and isinstance(item.get("messages"), list):
+                content = json.dumps(
+                    {
+                        "format": item.get("format") or "llmconnect.chat.v2",
+                        "model": item.get("model") or item.get("modelName") or "",
+                        "sourceUrl": item.get("sourceUrl") or "",
+                        "extractedAt": item.get("extractedAt")
+                        or item.get("createdAt")
+                        or datetime.now().isoformat(),
+                        "messages": item.get("messages") or [],
+                    },
+                    ensure_ascii=False,
+                )
+            elif isinstance(content, (dict, list)):
+                content = json.dumps(content, ensure_ascii=False)
+            else:
+                content = str(content or "")
+
+            if not content.strip():
+                continue
+
+            chat_kwargs = {
+                "title": str(item.get("title") or "Imported Chat"),
+                "category": str(item.get("category") or "Uncategorized"),
+                "project": str(
+                    item.get("project") or item.get("category") or "General"
+                ),
+                "content": content,
+                "created_at": str(
+                    item.get("createdAt")
+                    or item.get("created_at")
+                    or datetime.now().isoformat()
+                ),
+            }
+            chat_id = item.get("id")
+            if chat_id:
+                chat_kwargs["id"] = str(chat_id)
+
+            self.db.save_chat(SavedChat(**chat_kwargs))
+            imported_count += 1
+
+        if imported_count:
+            self.refresh_dashboard()
+
     def _build_chat_payloads(self):
         chats = self.db.get_all_chats()
         ordered_chats = sorted(
@@ -213,11 +399,14 @@ class HomeTab(QWidget):
         payloads = []
         for chat in ordered_chats:
             parsed_created_at = _parse_created_at(chat.created_at)
+            structured = _parse_chat_content(chat.content)
+            messages = structured.get("messages", []) if structured else []
             payloads.append(
                 {
                     "id": chat.id,
                     "title": chat.title,
                     "category": chat.category,
+                    "project": chat.project,
                     "content": chat.content,
                     "created_at": chat.created_at,
                     "createdLabel": _format_created_label(chat.created_at),
@@ -226,8 +415,11 @@ class HomeTab(QWidget):
                         if parsed_created_at
                         else ""
                     ),
-                    "messageCount": max(1, len(chat.content.splitlines()) or 1),
-                    "snippet": _snippet_from_content(chat.content),
+                    "messageCount": max(
+                        1, len(messages) or len(chat.content.splitlines()) or 1
+                    ),
+                    "imageCount": _count_images(messages),
+                    "snippet": _content_preview(chat.content),
                 }
             )
 
@@ -268,7 +460,10 @@ class HomeTab(QWidget):
     def _build_projects(self, chat_payloads):
         chat_groups = defaultdict(list)
         for chat in chat_payloads:
-            chat_groups[chat["category"]].append(chat)
+            project_name = (chat.get("project") or chat["category"]).strip() or chat[
+                "category"
+            ]
+            chat_groups[project_name].append(chat)
 
         projects = []
         for category_name, category_chats in sorted(
@@ -334,7 +529,7 @@ class HomeTab(QWidget):
         return models
 
     def _build_api_models(self):
-        api_key_store = SecureApiKeyStore()
+        api_key_store = self.api_key_store
         api_models = []
 
         for record in api_key_store.list_api_keys():

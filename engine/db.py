@@ -10,6 +10,7 @@ class SavedChat:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     title: str = "Untitled Chat"
     category: str = "Uncategorized"
+    project: str = "General"
     content: str = ""
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
@@ -31,20 +32,33 @@ class Database:
                 id TEXT PRIMARY KEY,
                 title TEXT,
                 category TEXT,
+                project TEXT,
                 content TEXT,
                 created_at TEXT
             )
         """)
+
+        cursor.execute("PRAGMA table_info(saved_chats)")
+        columns = {row[1] for row in cursor.fetchall()}
+        if "project" not in columns:
+            cursor.execute("ALTER TABLE saved_chats ADD COLUMN project TEXT DEFAULT 'General'")
         self.conn.commit()
 
     def save_chat(self, chat: SavedChat):
         cursor = self.conn.cursor()
         cursor.execute(
             """
-            INSERT OR REPLACE INTO saved_chats (id, title, category, content, created_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO saved_chats (id, title, category, project, content, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
         """,
-            (chat.id, chat.title, chat.category, chat.content, chat.created_at),
+            (
+                chat.id,
+                chat.title,
+                chat.category,
+                chat.project,
+                chat.content,
+                chat.created_at,
+            ),
         )
         self.conn.commit()
 
@@ -59,6 +73,7 @@ class Database:
                     id=row["id"],
                     title=row["title"],
                     category=row["category"],
+                    project=row["project"] if "project" in row.keys() else "General",
                     content=row["content"],
                     created_at=row["created_at"],
                 )

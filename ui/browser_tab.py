@@ -1,36 +1,25 @@
-import os
+import hashlib
 import json
+import os
 from dataclasses import dataclass
 from datetime import datetime
-from PyQt6.QtCore import QTimer
-from PyQt6.QtWidgets import QWidget, QVBoxLayout
-from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtWebEngineCore import QWebEngineProfile
-from PyQt6.QtCore import QUrl
 
+from PyQt6.QtCore import QTimer, QUrl
+from PyQt6.QtWidgets import QVBoxLayout, QWidget
+from PyQt6.QtWebEngineCore import QWebEngineProfile
+from PyQt6.QtWebEngineWidgets import QWebEngineView
+
+from engine.html_chat_parser import parse_chat_html
 from models import get_model_adapter
 
 
-# Data class to hold browser tab information
 @dataclass
 class BrowserData:
     BROWSER_MODEL_CHOICES = [
-        {
-            "model": "ChatGPT",
-            "url": "https://chatgpt.com",
-        },
-        {
-            "model": "Claude",
-            "url": "https://claude.ai",
-        },
-        {
-            "model": "Gemini",
-            "url": "https://gemini.google.com",
-        },
-        {
-            "model": "DeepSeek",
-            "url": "https://chat.deepseek.com",
-        },
+        {"model": "ChatGPT", "url": "https://chatgpt.com"},
+        {"model": "Claude", "url": "https://claude.ai"},
+        {"model": "Gemini", "url": "https://gemini.google.com"},
+        {"model": "DeepSeek", "url": "https://chat.deepseek.com"},
     ]
 
     def __init__(self):
@@ -70,7 +59,6 @@ class BrowserData:
 
     @staticmethod
     def get_role_names():
-        # This method read the files in the skills directory and returns the list of role names
         skills_dir = os.path.abspath(
             os.path.join(os.path.dirname(__file__), "..", "skills/BROWSER")
         )
@@ -88,8 +76,7 @@ class BrowserData:
         self.name = name.strip()
 
     def set_model(self, model: str):
-        valid_models = BrowserData.get_models()
-        if model not in valid_models:
+        if model not in BrowserData.get_models():
             raise ValueError("Invalid model")
         self.model = model
 
@@ -97,8 +84,7 @@ class BrowserData:
         if not role_id:
             self.role_id = ""
             return
-        valid_role_names = BrowserData.get_role_names()
-        if role_id not in valid_role_names:
+        if role_id not in BrowserData.get_role_names():
             raise ValueError("Invalid role ID")
         self.role_id = role_id
 
@@ -120,7 +106,6 @@ class BrowserData:
             return handle.read().strip()
 
 
-# New Tab class for Browser-based Models
 class BrowserTab(QWidget):
     def __init__(self, data: BrowserData):
         super().__init__()
@@ -132,6 +117,7 @@ class BrowserTab(QWidget):
         self.chat_count = 0
         self.last_used_at = datetime.now()
         self.model_adapter = get_model_adapter(self.model_name)
+        self._last_extract_signature = None
 
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
@@ -147,25 +133,34 @@ class BrowserTab(QWidget):
             )
         )
         os.makedirs(profile_dir, exist_ok=True)
+        os.makedirs(os.path.join(profile_dir, "cache"), exist_ok=True)
         self.profile.setPersistentStoragePath(profile_dir)
         self.profile.setCachePath(os.path.join(profile_dir, "cache"))
         self.profile.setPersistentCookiesPolicy(
             QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies
         )
 
+        self.snapshot_dir = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__), "..", ".llmconnect_data", "html_snapshots"
+            )
+        )
+        os.makedirs(self.snapshot_dir, exist_ok=True)
+        self.snapshot_path = os.path.join(
+            self.snapshot_dir, f"{self._profile_folder_name(self.name)}.html"
+        )
+
         self.browser = QWebEngineView(self)
         self.browser.setPage(self.browser.page().__class__(self.profile, self.browser))
-
         self.layout.addWidget(self.browser)
         self.browser.setUrl(QUrl(self.url))
 
         self.on_chat_extracted_callback = None
-
         self.browser.loadFinished.connect(self._inject_model_widget)
 
         self.poll_timer = QTimer(self)
-        self.poll_timer.setInterval(1500)
-        self.poll_timer.timeout.connect(self._poll_extracted_data)
+        self.poll_timer.setInterval(1200)
+        self.poll_timer.timeout.connect(self._poll_extract_request)
         self.poll_timer.start()
 
     @staticmethod
@@ -183,130 +178,99 @@ class BrowserTab(QWidget):
         if not ok:
             return
 
-        config = self.model_adapter.get_config()
-        js = f"""
-        (function() {{
-            const cfg = {json.dumps({
-                "modelName": config.model_name,
-                "inputSelectors": config.input_selectors,
-                "userSelectors": config.user_message_selectors,
-                "assistantSelectors": config.assistant_message_selectors,
+        # lightweight runtime logging to help debug injection issues
+        try:
+            log_dir = os.path.join(os.path.dirname(__file__), "..", ".llmconnect_data")
+            os.makedirs(log_dir, exist_ok=True)
+            with open(os.path.join(log_dir, "inject.log"), "a", encoding="utf-8") as lf:
+                lf.write(
+                    f"[{datetime.now().isoformat()}] _inject_model_widget called for {self.name}\n"
+                )
+        except Exception:
+            pass
+
+        cfg_json = json.dumps(
+            {
+                "modelName": self.model_name,
                 "rolePrompt": self.role_prompt,
-            }, ensure_ascii=False)};
+            },
+            ensure_ascii=False,
+        )
 
-            window._llmConnectExtractedChat = null;
+        js = """
+        (function() {
+            var cfg = __CFG_JSON__;
+            window._llmConnectExtractRequested = false;
 
-            function findInputElement() {{
-                for (const selector of cfg.inputSelectors) {{
-                    const element = document.querySelector(selector);
+            function findInputElement() {
+                var selectors = [
+                    '#prompt-textarea',
+                    "textarea[placeholder*='Message']",
+                    "div[contenteditable='true'][role='textbox']",
+                    "div[contenteditable='true'][aria-label*='prompt' i]",
+                    "div[contenteditable='true'][aria-label*='message' i]",
+                    "div[contenteditable='true']",
+                    'rich-textarea',
+                    "div[aria-label*='Enter a prompt'][contenteditable='true']",
+                    "div.ql-editor[contenteditable='true']",
+                    'textarea'
+                ];
+                for (var i = 0; i < selectors.length; i++) {
+                    var element = document.querySelector(selectors[i]);
                     if (element) return element;
-                }}
+                }
                 return null;
-            }}
+            }
 
-            function setInputText(text) {{
-                const input = findInputElement();
+            function setInputText(text) {
+                var input = findInputElement();
                 if (!input) return false;
-
-                if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {{
+                if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
                     input.value = text;
-                }} else {{
+                } else {
                     input.textContent = text;
-                }}
-
-                input.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                input.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'End', bubbles: true }}));
+                }
+                input.dispatchEvent(new Event('input', { bubbles: true }));
                 return true;
-            }}
+            }
 
-            function gatherMessages(selectors, roleLabel) {{
-                const messages = [];
-                for (const selector of selectors) {{
-                    const nodes = document.querySelectorAll(selector);
-                    for (const node of nodes) {{
-                        const text = (node.innerText || node.textContent || '').trim();
-                        if (text) messages.push(`\\n\\n--- ${{roleLabel}} ---\\n${{text}}`);
-                    }}
-                }}
-                return messages;
-            }}
-
-            function extractThread() {{
-                const userParts = gatherMessages(cfg.userSelectors, 'USER');
-                const aiParts = gatherMessages(cfg.assistantSelectors, 'AI');
-
-                if (!userParts.length && !aiParts.length) {{
-                    const fallback = [];
-                    const messageNodes = document.querySelectorAll('main article, main [data-message-author-role], main [data-message-author], main [data-testid*="conversation-turn"], main [role="listitem"], main .message, main .conversation-turn, main .markdown, main .prose');
-                    for (const node of messageNodes) {{
-                        const text = (node.innerText || node.textContent || '').trim();
-                        if (text) fallback.push(text);
-                    }}
-                    return fallback.join('\\n\\n');
-                }}
-
-                return [...userParts, ...aiParts].join('');
-            }}
-
-            window.__llmconnectInjectRolePrompt = function() {{
+            function injectRolePrompt() {
                 if (!cfg.rolePrompt) return false;
-                const currentInput = findInputElement();
+                var currentInput = findInputElement();
                 if (!currentInput) return false;
-                const existingText = (currentInput.value || currentInput.textContent || '').trim();
-                const rolePrefix = `[System Prompt]\\n${{cfg.rolePrompt}}\\n\\n`;
-                if (existingText.startsWith('[System Prompt]')) return true;
-                return setInputText(rolePrefix + existingText);
-            }};
+                var existingText = (currentInput.value || currentInput.textContent || '').trim();
+                if (existingText.indexOf('[System Prompt]') === 0) return true;
+                return setInputText('[System Prompt]\\n' + cfg.rolePrompt + '\\n\\n' + existingText);
+            }
 
-            if (!document.getElementById('llmconnect-widget')) {{
-                const style = document.createElement('style');
-                style.textContent = `
-                    #llmconnect-widget {{
-                        position: fixed;
-                        bottom: 20px;
-                        left: 20px;
-                        width: 280px;
-                        padding: 14px;
-                        border-radius: 14px;
-                        border: 1px solid #2a2a2a;
-                        background: rgba(16, 16, 16, 0.94);
-                        color: #f5f5f5;
-                        z-index: 2147483647;
-                        font-family: Inter, 'Segoe UI', sans-serif;
-                    }}
-                    #llmconnect-widget .title {{ font-size: 12px; color: #a3a3a3; margin-bottom: 10px; letter-spacing: 0.08em; text-transform: uppercase; }}
-                    #llmconnect-widget .row {{ display: flex; gap: 8px; }}
-                    #llmconnect-widget button {{
-                        flex: 1;
-                        min-height: 34px;
-                        border-radius: 9px;
-                        border: 1px solid #2f2f2f;
-                        cursor: pointer;
-                        background: #1a1a1a;
-                        color: #f5f5f5;
-                        font-weight: 600;
-                    }}
-                    #llmconnect-widget button.primary {{ background: #f1f1f1; color: #0e0e0e; border-color: #f1f1f1; }}
-                `;
+            if (!document.getElementById('llmconnect-widget')) {
+                var style = document.createElement('style');
+                style.textContent = [
+                    "#llmconnect-widget { position: fixed; bottom: 20px; left: 20px; width: 280px; padding: 14px; border-radius: 14px; border: 1px solid #2a2a2a; background: rgba(16, 16, 16, 0.94); color: #f5f5f5; z-index: 2147483647; font-family: Inter, 'Segoe UI', sans-serif; }",
+                    '#llmconnect-widget .title { font-size: 12px; color: #a3a3a3; margin-bottom: 10px; letter-spacing: 0.08em; text-transform: uppercase; }',
+                    '#llmconnect-widget .row { display: flex; gap: 8px; }',
+                    '#llmconnect-widget button { flex: 1; min-height: 34px; border-radius: 9px; border: 1px solid #2f2f2f; cursor: pointer; background: #1a1a1a; color: #f5f5f5; font-weight: 600; }',
+                    '#llmconnect-widget button.primary { background: #f1f1f1; color: #0e0e0e; border-color: #f1f1f1; }',
+                ].join('\\n');
                 document.head.appendChild(style);
 
-                const widget = document.createElement('div');
+                var widget = document.createElement('div');
                 widget.id = 'llmconnect-widget';
 
-                const title = document.createElement('div');
+                var title = document.createElement('div');
                 title.className = 'title';
                 title.textContent = cfg.modelName + ' Tools';
                 widget.appendChild(title);
 
-                const row = document.createElement('div');
+                var row = document.createElement('div');
                 row.className = 'row';
 
-                const roleButton = document.createElement('button');
+                var roleButton = document.createElement('button');
                 roleButton.id = 'llmconnect-role-btn';
                 roleButton.type = 'button';
                 roleButton.textContent = 'Inject Role';
 
-                const extractButton = document.createElement('button');
+                var extractButton = document.createElement('button');
                 extractButton.id = 'llmconnect-extract-btn';
                 extractButton.type = 'button';
                 extractButton.className = 'primary';
@@ -317,44 +281,164 @@ class BrowserTab(QWidget):
                 widget.appendChild(row);
                 document.body.appendChild(widget);
 
-                roleButton.addEventListener('click', function() {{
-                    const ok = window.__llmconnectInjectRolePrompt();
-                    const btn = document.getElementById('llmconnect-role-btn');
+                roleButton.addEventListener('click', function() {
+                    var ok = false;
+                    try {
+                        ok = injectRolePrompt();
+                    } catch (error) {
+                        ok = false;
+                    }
+                    var btn = document.getElementById('llmconnect-role-btn');
                     if (!btn) return;
                     btn.textContent = ok ? 'Injected' : 'No Input';
-                    setTimeout(function() {{ btn.textContent = 'Inject Role'; }}, 1400);
-                }});
+                    setTimeout(function() { btn.textContent = 'Inject Role'; }, 1400);
+                });
 
-                extractButton.addEventListener('click', function() {{
-                    const thread = extractThread();
-                    if (!thread) return;
-                    window._llmConnectExtractedChat = thread;
-                    const btn = document.getElementById('llmconnect-extract-btn');
+                extractButton.addEventListener('click', function() {
+                    window._llmConnectExtractRequested = true;
+                    var btn = document.getElementById('llmconnect-extract-btn');
                     if (!btn) return;
-                    btn.textContent = 'Extracted';
-                    setTimeout(function() {{ btn.textContent = 'Extract Chat'; }}, 1400);
-                }});
-            }}
+                    btn.textContent = 'Queued';
+                    setTimeout(function() { btn.textContent = 'Extract Chat'; }, 1400);
+                });
+            }
 
-            if (cfg.rolePrompt) {{
-                window.__llmconnectInjectRolePrompt();
-            }}
-        }})();
+            if (!window._llmConnectWidgetRetryStarted) {
+                window._llmConnectWidgetRetryStarted = true;
+                var retryCount = 0;
+                var retryTimer = setInterval(function() {
+                    retryCount += 1;
+                    if (document.getElementById('llmconnect-widget')) {
+                        clearInterval(retryTimer);
+                        return;
+                    }
+                    if (retryCount > 8) {
+                        clearInterval(retryTimer);
+                        return;
+                    }
+                    try {
+                        if (document.body && !document.getElementById('llmconnect-widget')) {
+                            var body = document.body;
+                            var widget = document.createElement('div');
+                            widget.id = 'llmconnect-widget';
+                            widget.style.position = 'fixed';
+                            widget.style.bottom = '20px';
+                            widget.style.left = '20px';
+                            widget.style.zIndex = '2147483647';
+                            widget.style.background = 'rgba(16,16,16,0.94)';
+                            widget.style.color = '#f5f5f5';
+                            widget.style.border = '1px solid #2a2a2a';
+                            widget.style.borderRadius = '14px';
+                            widget.style.padding = '14px';
+                            widget.style.width = '280px';
+                            widget.textContent = cfg.modelName + ' Tools';
+                            body.appendChild(widget);
+                            clearInterval(retryTimer);
+                        }
+                    } catch (error) {
+                    }
+                }, 1200);
+            }
+
+            if (cfg.rolePrompt) {
+                try {
+                    injectRolePrompt();
+                } catch (error) {
+                }
+            }
+        })();
         """
-        self.browser.page().runJavaScript(js)
+        js = js.replace("__CFG_JSON__", cfg_json)
 
-    def _poll_extracted_data(self):
+        def _js_callback(result=None):
+            try:
+                msg = f"[{datetime.now().isoformat()}] runJavaScript completed for {self.name} result={result}\n"
+                print(msg.strip())
+                with open(
+                    os.path.join(
+                        os.path.dirname(__file__),
+                        "..",
+                        ".llmconnect_data",
+                        "inject.log",
+                    ),
+                    "a",
+                    encoding="utf-8",
+                ) as lf:
+                    lf.write(msg)
+            except Exception:
+                pass
+
+        try:
+            self.browser.page().runJavaScript(js, _js_callback)
+        except Exception as exc:
+            try:
+                with open(
+                    os.path.join(
+                        os.path.dirname(__file__),
+                        "..",
+                        ".llmconnect_data",
+                        "inject.log",
+                    ),
+                    "a",
+                    encoding="utf-8",
+                ) as lf:
+                    lf.write(
+                        f"[{datetime.now().isoformat()}] runJavaScript exception for {self.name}: {exc}\n"
+                    )
+            except Exception:
+                pass
+
+    def _poll_extract_request(self):
         self.browser.page().runJavaScript(
-            """
-            (function() {
-                if (!window._llmConnectExtractedChat) return null;
-                const extracted = window._llmConnectExtractedChat;
-                window._llmConnectExtractedChat = null;
-                return extracted;
-            })();
-            """,
-            self._handle_extracted_data,
+            "Boolean(window._llmConnectExtractRequested === true)",
+            self._handle_extract_request_state,
         )
+
+    def _handle_extract_request_state(self, requested):
+        if not requested:
+            return
+        self.browser.page().toHtml(self._handle_html_snapshot)
+
+    def _handle_html_snapshot(self, html):
+        if not html:
+            self.browser.page().runJavaScript(
+                "window._llmConnectExtractRequested = false;"
+            )
+            return
+
+        html = html.strip()
+        if not html:
+            self.browser.page().runJavaScript(
+                "window._llmConnectExtractRequested = false;"
+            )
+            return
+
+        try:
+            with open(self.snapshot_path, "w", encoding="utf-8") as handle:
+                handle.write(html)
+        except OSError:
+            pass
+
+        parsed = parse_chat_html(html, self.model_name, self.url)
+        payload_json = json.dumps(parsed, ensure_ascii=False)
+        signature = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+        self.browser.page().runJavaScript("window._llmConnectExtractRequested = false;")
+
+        if signature == self._last_extract_signature:
+            return
+        self._last_extract_signature = signature
+
+        if self.on_chat_extracted_callback:
+            self.on_chat_extracted_callback(
+                {
+                    "tabName": self.name,
+                    "modelName": self.model_name,
+                    "roleName": self.role_name,
+                    "content": payload_json,
+                    "createdAt": datetime.now().isoformat(),
+                    "sourceHtmlPath": self.snapshot_path,
+                }
+            )
 
     def _handle_extracted_data(self, data):
         if not data:

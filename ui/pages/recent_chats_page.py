@@ -16,17 +16,27 @@ def _escape_json_for_script(payload: str) -> str:
 
 
 class RecentChatsBridge(QObject):
-    def __init__(self, on_navigate):
+    def __init__(self, on_navigate, on_import_chats, on_export_chats):
         super().__init__()
         self.on_navigate = on_navigate
+        self.on_import_chats = on_import_chats
+        self.on_export_chats = on_export_chats
 
     @pyqtSlot(str)
     def navigate(self, section: str):
         self.on_navigate(section)
 
+    @pyqtSlot()
+    def importChats(self):
+        self.on_import_chats()
+
+    @pyqtSlot()
+    def exportChats(self):
+        self.on_export_chats()
+
 
 class RecentChatsPage(QWidget):
-    def __init__(self, on_navigate):
+    def __init__(self, on_navigate, on_import_chats, on_export_chats):
         super().__init__()
         self._loaded = False
         self._payload = None
@@ -36,7 +46,7 @@ class RecentChatsPage(QWidget):
 
         self.browser = QWebEngineView(self)
         self.channel = QWebChannel(self.browser.page())
-        self.bridge = RecentChatsBridge(on_navigate)
+        self.bridge = RecentChatsBridge(on_navigate, on_import_chats, on_export_chats)
         self.channel.registerObject("llmConnectBridge", self.bridge)
         self.browser.page().setWebChannel(self.channel)
         self.browser.loadFinished.connect(self._on_load_finished)

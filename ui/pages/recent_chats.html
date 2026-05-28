@@ -7,6 +7,27 @@
     <link rel="stylesheet" href="../dashboard.css">
     <style>
         .recent-body { padding: 0 28px 28px; }
+        .split { display: grid; grid-template-columns: minmax(260px, 0.9fr) minmax(0, 1.35fr); gap: 16px; align-items: start; }
+        .item-btn { width: 100%; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 12px; padding: 10px 12px; color: var(--muted-strong); cursor: pointer; }
+        .item-btn:hover { background: rgba(255, 255, 255, 0.03); border-color: rgba(255, 255, 255, 0.06); color: var(--foreground); }
+        .item-btn.active { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.09); color: var(--foreground); }
+        .meta-list { display: grid; gap: 8px; color: var(--muted-strong); font-size: 13px; }
+        .chat-panel { display: grid; gap: 14px; }
+        .chat-header { display: flex; flex-direction: column; gap: 8px; }
+        .chat-badges { display: flex; flex-wrap: wrap; gap: 8px; }
+        .chat-transcript { display: grid; gap: 12px; }
+        .bubble { border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 16px; padding: 14px; background: rgba(255, 255, 255, 0.03); }
+        .bubble.user { background: rgba(72, 116, 255, 0.12); border-color: rgba(72, 116, 255, 0.2); }
+        .bubble.assistant { background: rgba(176, 92, 255, 0.12); border-color: rgba(176, 92, 255, 0.2); }
+        .bubble.message { background: rgba(255, 255, 255, 0.04); }
+        .bubble-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+        .bubble-role { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted-strong); }
+        .bubble-text { white-space: pre-wrap; line-height: 1.55; color: var(--foreground); }
+        .image-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-top: 12px; }
+        .image-card { border-radius: 14px; overflow: hidden; border: 1px solid rgba(255,255,255,0.08); background: rgba(0,0,0,0.18); }
+        .image-card img { width: 100%; height: auto; display: block; }
+        .image-caption { padding: 8px 10px; font-size: 12px; color: var(--muted-strong); }
+        @media (max-width: 1280px) { .split { grid-template-columns: 1fr; } }
     </style>
 </head>
 <body>
@@ -44,10 +65,23 @@
                     <h1 class="page-title">Recent Chats</h1>
                     <p class="page-description">Latest saved conversations with category and timestamp details.</p>
                 </div>
+                <div class="page-actions" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+                    <button class="nav-item" type="button" data-action="export-chats" style="padding:10px 14px;">Export Chats</button>
+                    <button class="nav-item" type="button" data-action="import-chats" style="padding:10px 14px;">Import Chats</button>
+                </div>
             </header>
 
             <section class="recent-body">
-                <div id="list" class="list-card"></div>
+                <div class="split">
+                    <article class="card">
+                        <h2 class="card-title">Recent Chats</h2>
+                        <div id="list"></div>
+                    </article>
+                    <article class="card">
+                        <h2 class="card-title">Chat View</h2>
+                        <div id="details"></div>
+                    </article>
+                </div>
             </section>
         </div>
     </main>
@@ -57,6 +91,7 @@
 <script>
 let data = __APP_DATA__;
 let llmConnectBridge = null;
+let selectedId = null;
 
 function esc(v) {
     return String(v ?? "")
@@ -65,23 +100,114 @@ function esc(v) {
         .replaceAll(">", "&gt;");
 }
 
-function renderAll() {
-    const chats = data.recentChats || [];
-    document.getElementById("list").innerHTML = chats.length
-        ? chats
-              .map(
-                  (c) => `
-            <div class="chat-row">
-                <div class="chat-main">
-                    <p class="chat-title">${esc(c.title)}</p>
-                    <div class="chat-meta">${esc(c.category)} • ${esc(c.createdLabel || "")}</div>
-                    <div class="chat-snippet">${esc(c.snippet || "")}</div>
+function parseContent(content) {
+    if (typeof content !== "string" || !content.trim()) return null;
+    try {
+        const parsed = JSON.parse(content);
+        if (parsed && Array.isArray(parsed.messages)) return parsed;
+    } catch (error) {
+        return null;
+    }
+    return null;
+}
+
+function selectChat(id) {
+    selectedId = id;
+    renderAll();
+}
+
+function renderChatPreview(chat) {
+    const structured = parseContent(chat.content);
+    const messages = (structured && structured.messages) || [];
+    const imageCount = messages.reduce((total, message) => total + ((message.images && message.images.length) || 0), 0);
+    const messageCount = messages.length || chat.messageCount || 0;
+
+    return `
+        <button class="item-btn ${chat.id === selectedId ? 'active' : ''}" data-id="${esc(chat.id)}">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                <strong>${esc(chat.title)}</strong>
+                <span class="badge">${esc(messageCount)} msgs${imageCount ? ` · ${esc(imageCount)} imgs` : ''}</span>
+            </div>
+            <div class="chat-meta">${esc(chat.category)} · ${esc(chat.project || 'General')} · ${esc(chat.createdLabel || '')}</div>
+            <div class="chat-snippet">${esc(chat.snippet || '')}</div>
+        </button>
+    `;
+}
+
+function renderTranscript(chat) {
+    if (!chat) {
+        return '<div class="empty-state">Select a chat from the left.</div>';
+    }
+
+    const structured = parseContent(chat.content);
+    const messages = (structured && structured.messages) || [];
+
+    if (!structured || !messages.length) {
+        return `
+            <div class="chat-panel">
+                <div class="chat-header">
+                    <div class="chat-meta">${esc(chat.category)} · ${esc(chat.project || 'General')} · ${esc(chat.createdLabel || '')}</div>
+                    <h3 class="page-title" style="font-size: 22px; margin: 0;">${esc(chat.title)}</h3>
+                </div>
+                <div class="bubble message">
+                    <div class="bubble-top"><div class="bubble-role">Text</div></div>
+                    <div class="bubble-text">${esc(chat.content || '')}</div>
                 </div>
             </div>
-        `
-              )
-              .join("")
+        `;
+    }
+
+    return `
+        <div class="chat-panel">
+            <div class="chat-header">
+                <div class="chat-meta">${esc(chat.category)} · ${esc(chat.project || 'General')} · ${esc(chat.createdLabel || '')}</div>
+                <h3 class="page-title" style="font-size: 22px; margin: 0;">${esc(chat.title)}</h3>
+                ${structured.summary ? `<div class="chat-snippet">${esc(structured.summary)}</div>` : ''}
+                <div class="chat-badges">
+                    <span class="badge">${esc(messages.length)} msgs</span>
+                    ${messages.some((m) => (m.images || []).length) ? `<span class="badge">Images supported</span>` : ''}
+                </div>
+            </div>
+            <div class="chat-transcript">
+                ${messages
+                    .map((message) => {
+                        const role = (message.role || 'message').toLowerCase();
+                        const text = esc(message.text || '');
+                        const images = (message.images || [])
+                            .map((image) => `
+                                <div class="image-card">
+                                    <img src="${esc(image.src || '')}" alt="${esc(image.alt || '')}">
+                                    ${(image.alt || image.title) ? `<div class="image-caption">${esc(image.alt || image.title || '')}</div>` : ''}
+                                </div>
+                            `)
+                            .join('');
+
+                        return `
+                            <article class="bubble ${esc(role)}">
+                                <div class="bubble-top">
+                                    <div class="bubble-role">${esc(role)}</div>
+                                </div>
+                                ${text ? `<div class="bubble-text">${text}</div>` : ''}
+                                ${images ? `<div class="image-grid">${images}</div>` : ''}
+                            </article>
+                        `;
+                    })
+                    .join('')}
+            </div>
+        </div>
+    `;
+}
+
+function renderAll() {
+    const chats = data.recentChats || [];
+    if (!selectedId && chats.length) selectedId = chats[0].id;
+    const active = chats.find((chat) => chat.id === selectedId) || chats[0] || null;
+
+    document.getElementById("list").innerHTML = chats.length
+        ? chats.map((chat) => renderChatPreview(chat)).join("")
         : '<div class="empty-state">No recent chats.</div>';
+
+    document.getElementById("details").innerHTML = renderTranscript(active);
 }
 
 window.__PAGE_RENDER__ = (nextData) => {
@@ -93,6 +219,24 @@ document.addEventListener("click", (event) => {
     const nav = event.target.closest("[data-nav]");
     if (nav && llmConnectBridge) {
         llmConnectBridge.navigate(nav.dataset.nav);
+        return;
+    }
+
+    const action = event.target.closest("[data-action]");
+    if (action && llmConnectBridge) {
+        if (action.dataset.action === "import-chats") {
+            llmConnectBridge.importChats();
+            return;
+        }
+        if (action.dataset.action === "export-chats") {
+            llmConnectBridge.exportChats();
+            return;
+        }
+    }
+
+    const row = event.target.closest("[data-id]");
+    if (row) {
+        selectChat(row.dataset.id);
     }
 });
 
